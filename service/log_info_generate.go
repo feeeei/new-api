@@ -343,13 +343,19 @@ func InjectTieredBillingInfo(other *model.LogOther, relayInfo *relaycommon.Relay
 	other.SetPublic("expr_b64", base64.StdEncoding.EncodeToString([]byte(snap.ExprString)))
 	if result != nil {
 		if tokens := result.BillingTokens; tokens != nil && result.BillingUnit == billingexpr.BillingUnitToken {
-			other.SetPublic("image_cache_tokens", tokens.ImgCR)
-			other.SetPublic("billing_tokens", map[string]float64{
+			billingTokens := map[string]float64{
 				"p": tokens.P, "c": tokens.C, "len": tokens.Len,
 				"cr": tokens.CR, "cc": tokens.CC, "cc1h": tokens.CC1h,
 				"img": tokens.Img, "img_cr": tokens.ImgCR, "img_o": tokens.ImgO,
 				"ai": tokens.AI, "ao": tokens.AO,
-			})
+			}
+			// Explicit cache charges carry storage instead of image cache usage.
+			if tokens.CS > 0 {
+				billingTokens["cs"] = tokens.CS
+			} else {
+				other.SetPublic("image_cache_tokens", tokens.ImgCR)
+			}
+			other.SetPublic("billing_tokens", billingTokens)
 		}
 		if result.ImageCount != nil {
 			other.SetPublic("image_count", *result.ImageCount)

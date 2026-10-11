@@ -737,6 +737,78 @@ func TestInputPreConsumeMultiplierLegacyAndRequestPrices(t *testing.T) {
 	}
 }
 
+func TestQuoteGeminiCachedContentCharge(t *testing.T) {
+	previous := config.GlobalConfig.ExportAllConfigs()
+	previousQuotaPerUnit := common.QuotaPerUnit
+	t.Cleanup(func() {
+		common.QuotaPerUnit = previousQuotaPerUnit
+		require.NoError(t, config.GlobalConfig.LoadFromDB(previous))
+	})
+	common.QuotaPerUnit = 500000
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		"billing_setting.billing_mode": `{"cache-storage":"tiered_expr","cache-no-storage":"tiered_expr","cache-fixed":"tiered_expr"}`,
+		"billing_setting.billing_expr": `{"cache-storage":"tier(\"base\", p * 2 + cs * 4)",` +
+			`"cache-no-storage":"tier(\"base\", p * 2)",` +
+			`"cache-fixed":"len <= 100 ? tier(\"short\", fixed(0.01)) : tier(\"long\", p * 2 + cs * 4)"}`,
+		"group_ratio_setting.group_ratio": `{"default":1,"premium":1.5}`,
+	}))
+
+	for _, tc := range []struct {
+		name           string
+		model, group   string
+		context, input int64
+		storage        float64
+		strict         bool
+		wantQuota      int
+		wantTier       string
+		wantErr        error
+		wantClamp      bool
+		wantStrictErr  bool
+	}{
+		// $2/1M input plus $4/1M token-hours: 1000 tokens stored for 30 minutes
+		// cost (1000*2 + 500*4) / 1e6 USD, which is 4000 / 1e6 * 500000 quota.
+		{name: "create charges input and storage", model: "cache-storage", group: "default", context: 1000, input: 1000, storage: 500, wantQuota: 2000, wantTier: "base"},
+		{name: "group ratio applies", model: "cache-storage", group: "premium", context: 1000, input: 1000, storage: 500, strict: true, wantQuota: 3000, wantTier: "base"},
+		{name: "extension charges storage only", model: "cache-storage", group: "default", context: 1000, storage: 1000, wantQuota: 2000, wantTier: "base"},
+		{name: "expression without cs", model: "cache-no-storage", group: "default", context: 1000, input: 1000, storage: 500, wantErr: ErrGeminiCachedContentStorageNotPriced},
+		{name: "ratio billed model", model: "cache-ratio-only", group: "default", context: 1000, input: 1000, storage: 500, wantErr: ErrGeminiCachedContentStorageNotPriced},
+		{name: "fixed leaf cannot price storage", model: "cache-fixed", group: "default", context: 50, input: 50, storage: 25, wantErr: ErrGeminiCachedContentStorageNotPriced},
+		{name: "token leaf of a mixed expression", model: "cache-fixed", group: "default", context: 1000, input: 1000, storage: 500, wantQuota: 2000, wantTier: "long"},
+		{name: "estimate rejects saturation", model: "cache-storage", group: "default", context: 1000, input: 1000, storage: 1e15, strict: true, wantStrictErr: true},
+		{name: "settlement saturates and audits", model: "cache-storage", group: "default", context: 1000, input: 1000, storage: 1e15, wantQuota: common.MaxQuota, wantTier: "base", wantClamp: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1beta/cachedContents", nil)
+			info := &relaycommon.RelayInfo{OriginModelName: tc.model, UserGroup: "default", UsingGroup: tc.group}
+			charge, err := QuoteGeminiCachedContentCharge(ctx, info, tc.context, tc.input, tc.storage, tc.strict)
+			if tc.wantErr != nil {
+				require.ErrorIs(t, err, tc.wantErr)
+				return
+			}
+			if tc.wantStrictErr {
+				var clamp *common.QuotaClamp
+				require.ErrorAs(t, err, &clamp)
+				assert.Nil(t, info.QuotaClamp)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantQuota, charge.Quota)
+			assert.Equal(t, billingexpr.TokenParams{P: float64(tc.input), Len: float64(tc.context), CS: tc.storage}, *charge.Result.BillingTokens)
+			assert.Equal(t, billingexpr.BillingUnitToken, charge.Result.BillingUnit)
+			assert.Equal(t, tc.wantTier, charge.Result.MatchedTier)
+			assert.Equal(t, tc.wantQuota, charge.Result.ActualQuotaAfterGroup)
+			assert.Equal(t, tc.wantClamp, charge.Result.Clamp != nil)
+			assert.Equal(t, tc.wantClamp, info.QuotaClamp != nil)
+			assert.Equal(t, charge.GroupRatio, info.PriceData.GroupRatioInfo.GroupRatio)
+			require.NotNil(t, info.TieredBillingSnapshot)
+			assert.Equal(t, tc.model, info.TieredBillingSnapshot.ModelName)
+			assert.Equal(t, charge.GroupRatio, info.TieredBillingSnapshot.GroupRatio)
+			assert.Equal(t, tc.wantQuota, info.TieredBillingSnapshot.EstimatedQuotaAfterGroup)
+		})
+	}
+}
+
 // priceTestReservation observes the reservation requested before image submission.
 type priceTestReservation struct{ held int }
 

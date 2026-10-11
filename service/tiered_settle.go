@@ -68,6 +68,17 @@ func BuildTieredTokenParams(usage *dto.Usage, isClaudeUsageSemantic bool, usedVa
 		}
 	}
 	ai := float64(usage.PromptTokensDetails.AudioTokens)
+	// Gemini counts cached audio in both the audio input and the cached total.
+	// When both are priced, cached audio is billed once, as a cache read.
+	if usage.UsageSemantic == dto.BillingUsageSemanticGemini && usedVars["ai"] && usedVars["cr"] {
+		details := usage.PromptTokensDetails.CachedTokensDetails
+		if details != nil && details.AudioTokens != nil {
+			cachedAudio := float64(*details.AudioTokens)
+			if cachedAudio >= 0 && cachedAudio <= ai && cachedAudio <= cr {
+				ai -= cachedAudio
+			}
+		}
+	}
 	imgO := float64(usage.CompletionTokenDetails.ImageTokens)
 	ao := float64(usage.CompletionTokenDetails.AudioTokens)
 

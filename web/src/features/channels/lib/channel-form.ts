@@ -20,6 +20,7 @@ import { z } from 'zod'
 
 import {
   CLAUDE_FIELD_PASSTHROUGH_TYPES,
+  CHANNEL_TYPE_GEMINI,
   CHANNEL_TYPE_NEW_API,
   CHANNEL_TYPE_OLLAMA,
   CHANNEL_TYPE_TASK_PLUGIN,
@@ -279,6 +280,9 @@ export const channelFormSchema = z
     vertex_key_type: z.enum(['json', 'api_key']).optional(), // Vertex AI specific
     aws_key_type: z.enum(['ak_sk', 'api_key']).optional(), // AWS specific
     azure_responses_version: z.string().optional(), // Azure specific
+    // Gemini: the custom base URL is another gateway serving /v1beta/cachedContents
+    gemini_explicit_cache_upstream: z.boolean().optional(),
+    gemini_explicit_cache_upstream_max_ttl_seconds: z.number().optional(), // 0 = no channel cap
     // Field passthrough controls (stored in settings JSON)
     allow_service_tier: z.boolean().optional(), // OpenAI/Anthropic
     disable_store: z.boolean().optional(), // OpenAI only
@@ -390,6 +394,20 @@ export const channelFormSchema = z
       )
     }
 
+    const explicitCacheMaxTTL =
+      data.gemini_explicit_cache_upstream_max_ttl_seconds ?? 0
+    if (
+      data.type === CHANNEL_TYPE_GEMINI &&
+      data.gemini_explicit_cache_upstream === true &&
+      (!Number.isSafeInteger(explicitCacheMaxTTL) || explicitCacheMaxTTL < 0)
+    ) {
+      addRequiredIssue(
+        ctx,
+        'gemini_explicit_cache_upstream_max_ttl_seconds',
+        'Enter a non-negative integer'
+      )
+    }
+
     if (
       data.type === 41 &&
       data.vertex_key_type === 'api_key' &&
@@ -471,6 +489,8 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   vertex_key_type: 'json',
   aws_key_type: 'ak_sk',
   azure_responses_version: '',
+  gemini_explicit_cache_upstream: false,
+  gemini_explicit_cache_upstream_max_ttl_seconds: 0,
   // Field passthrough controls
   allow_service_tier: false,
   disable_store: false,
@@ -546,6 +566,8 @@ export function transformChannelToFormDefaults(
   let azureResponsesVersion = ''
   let isEnterpriseAccount = false
   let awsKeyType: 'ak_sk' | 'api_key' = 'ak_sk'
+  let geminiExplicitCacheUpstream = false
+  let geminiExplicitCacheUpstreamMaxTTLSeconds = 0
   let allowServiceTier = false
   let disableStore = false
   let allowSafetyIdentifier = false
@@ -567,6 +589,15 @@ export function transformChannelToFormDefaults(
       azureResponsesVersion = parsed.azure_responses_version || ''
       isEnterpriseAccount = parsed.openrouter_enterprise === true
       awsKeyType = parsed.aws_key_type || 'ak_sk'
+      geminiExplicitCacheUpstream =
+        parsed.gemini_explicit_cache_upstream === true
+      const explicitCacheMaxTTL = Number(
+        parsed.gemini_explicit_cache_upstream_max_ttl_seconds
+      )
+      geminiExplicitCacheUpstreamMaxTTLSeconds =
+        Number.isSafeInteger(explicitCacheMaxTTL) && explicitCacheMaxTTL > 0
+          ? explicitCacheMaxTTL
+          : 0
       allowServiceTier = parsed.allow_service_tier === true
       disableStore = parsed.disable_store === true
       allowSafetyIdentifier = parsed.allow_safety_identifier === true
@@ -627,6 +658,9 @@ export function transformChannelToFormDefaults(
     vertex_key_type: vertexKeyType,
     azure_responses_version: azureResponsesVersion,
     aws_key_type: awsKeyType,
+    gemini_explicit_cache_upstream: geminiExplicitCacheUpstream,
+    gemini_explicit_cache_upstream_max_ttl_seconds:
+      geminiExplicitCacheUpstreamMaxTTLSeconds,
     allow_service_tier: allowServiceTier,
     disable_store: disableStore,
     allow_include_obfuscation: allowIncludeObfuscation,
@@ -731,6 +765,26 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
     settingsObj.aws_key_type = formData.aws_key_type || 'ak_sk'
   } else if ('aws_key_type' in settingsObj) {
     delete settingsObj.aws_key_type
+  }
+
+  // Gemini explicit caching through another cachedContents gateway; the TTL
+  // cap is kept only while that gateway is declared and limits caches.
+  if (formData.type === CHANNEL_TYPE_GEMINI) {
+    settingsObj.gemini_explicit_cache_upstream =
+      formData.gemini_explicit_cache_upstream === true
+  } else if ('gemini_explicit_cache_upstream' in settingsObj) {
+    delete settingsObj.gemini_explicit_cache_upstream
+  }
+  const explicitCacheMaxTTL =
+    formData.gemini_explicit_cache_upstream_max_ttl_seconds ?? 0
+  if (
+    settingsObj.gemini_explicit_cache_upstream === true &&
+    explicitCacheMaxTTL > 0
+  ) {
+    settingsObj.gemini_explicit_cache_upstream_max_ttl_seconds =
+      explicitCacheMaxTTL
+  } else if ('gemini_explicit_cache_upstream_max_ttl_seconds' in settingsObj) {
+    delete settingsObj.gemini_explicit_cache_upstream_max_ttl_seconds
   }
 
   // Field passthrough controls:

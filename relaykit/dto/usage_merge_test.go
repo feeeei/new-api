@@ -163,6 +163,45 @@ func TestMergeGeminiUsageMetadataStreamDetailsAreCumulativeSnapshots(t *testing.
 	assert.Equal(t, nonStreamUsage, repeatedUsage)
 }
 
+func TestMergeGeminiUsageMetadataKeepsCacheTokensDetails(t *testing.T) {
+	t.Parallel()
+
+	prompt := []GeminiPromptTokensDetails{
+		{Modality: "TEXT", TokenCount: 100},
+		{Modality: "AUDIO", TokenCount: 19200},
+	}
+	cached := []GeminiPromptTokensDetails{{Modality: "AUDIO", TokenCount: 19200}}
+	final := &GeminiUsageMetadata{
+		PromptTokenCount:        19300,
+		CandidatesTokenCount:    1000,
+		TotalTokenCount:         20300,
+		CachedContentTokenCount: 19200,
+		PromptTokensDetails:     prompt,
+		CacheTokensDetails:      cached,
+	}
+	// The breakdown first arrives in a later frame, and a trailing frame
+	// without details keeps it.
+	frames := []*GeminiUsageMetadata{
+		{PromptTokenCount: 19300, TotalTokenCount: 19300, PromptTokensDetails: prompt},
+		final,
+		{PromptTokenCount: 19300, CandidatesTokenCount: 1000, TotalTokenCount: 20300},
+	}
+	var merged *GeminiUsageMetadata
+	for _, frame := range frames {
+		merged = MergeGeminiUsageMetadataNonZero(merged, frame)
+	}
+	require.NotNil(t, merged)
+	assert.Equal(t, cached, merged.CacheTokensDetails)
+
+	streamUsage, ok := NewGeminiChatBillingUsage(merged).CanonicalUsage()
+	require.True(t, ok)
+	nonStreamUsage, ok := NewGeminiChatBillingUsage(final).CanonicalUsage()
+	require.True(t, ok)
+	assert.Equal(t, nonStreamUsage, streamUsage)
+	require.NotNil(t, streamUsage.PromptTokensDetails.CachedTokensDetails)
+	assert.Equal(t, 19200, *streamUsage.PromptTokensDetails.CachedTokensDetails.AudioTokens)
+}
+
 func TestClaudeCacheCreationSubObjectZeroDoesNotReviveFlatLegacyFields(t *testing.T) {
 	t.Parallel()
 

@@ -70,7 +70,8 @@ export type DynamicPriceEntry = {
   formattedRange?: string
   minValue?: number
   maxValue?: number
-  unit: 'token' | BillingUsageUnit | 'request' | 'image'
+  /** `token_hour` is a storage price per token per hour, scaled like `token`. */
+  unit: 'token' | 'token_hour' | BillingUsageUnit | 'request' | 'image'
   unitLabel?: string | Record<string, string>
   variable?: BillingVar
   description?: string | Record<string, string>
@@ -126,6 +127,8 @@ export function getDynamicPriceUnitLabelKey(
   if (entry.unit === 'credit') return 'credit'
   // Chat token entries also use unit 'token' but keep the 1M-token label.
   if (entry.unit === 'token' && !entry.variable) return '1M token'
+  // Interpolate `unit` with the selected token unit label (1K or 1M).
+  if (entry.unit === 'token_hour') return '{{unit}} tokens / hour'
   if (entry.unit === 'request') return 'request'
   if (entry.unit === 'image') return 'image'
   return null
@@ -370,7 +373,10 @@ export function getDynamicPriceEntries(
         labelKind: 'i18n' as const,
         value,
         formatted: formatDynamicUnitPrice(value, options),
-        unit: 'token' as const,
+        unit:
+          variable.group === 'storage'
+            ? ('token_hour' as const)
+            : ('token' as const),
         variable,
       },
     ]

@@ -1611,6 +1611,123 @@ test('an Ollama channel marks a saved OpenAI-compatible chat setting in Request 
   })
 })
 
+test('a Gemini channel declares an explicit cache gateway and saves its TTL cap in other settings', async () => {
+  editingChannel = {
+    ...editingChannel,
+    type: 24,
+    settings: '{"disable_task_polling_sleep":false}',
+  }
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  await screen.findByDisplayValue('Existing channel')
+  const gateway = screen.getByRole('switch', { name: 'Explicit cache gateway' })
+  expect(gateway).not.toBeChecked()
+  expect(
+    screen.queryByRole('spinbutton', {
+      name: 'Explicit cache max TTL (seconds)',
+    })
+  ).not.toBeInTheDocument()
+  await user.click(gateway)
+  const maxTTL = screen.getByRole('spinbutton', {
+    name: 'Explicit cache max TTL (seconds)',
+  })
+  expect(maxTTL).toHaveValue(0)
+  fireEvent.change(maxTTL, { target: { value: '3600' } })
+  await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+  await waitFor(() => expect(put).toHaveBeenCalled())
+  const payload = put.mock.calls[0]?.[1] as { settings: string }
+  expect(JSON.parse(payload.settings)).toMatchObject({
+    gemini_explicit_cache_upstream: true,
+    gemini_explicit_cache_upstream_max_ttl_seconds: 3600,
+  })
+})
+
+test('turning off a saved Gemini cache gateway also drops its TTL cap', async () => {
+  editingChannel = {
+    ...editingChannel,
+    type: 24,
+    settings:
+      '{"gemini_explicit_cache_upstream":true,"gemini_explicit_cache_upstream_max_ttl_seconds":7200}',
+  }
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  await screen.findByDisplayValue('Existing channel')
+  const gateway = screen.getByRole('switch', { name: 'Explicit cache gateway' })
+  expect(gateway).toBeChecked()
+  expect(
+    screen.getByRole('spinbutton', { name: 'Explicit cache max TTL (seconds)' })
+  ).toHaveValue(7200)
+  await user.click(gateway)
+  expect(
+    screen.queryByRole('spinbutton', {
+      name: 'Explicit cache max TTL (seconds)',
+    })
+  ).not.toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+  await waitFor(() => expect(put).toHaveBeenCalled())
+  const payload = put.mock.calls[0]?.[1] as { settings: string }
+  const settings = JSON.parse(payload.settings)
+  expect(settings.gemini_explicit_cache_upstream).toBe(false)
+  expect(settings).not.toHaveProperty(
+    'gemini_explicit_cache_upstream_max_ttl_seconds'
+  )
+})
+
+test.each(['-1', '1.5'])(
+  'a Gemini cache gateway TTL of %s shows a field error and blocks saving',
+  async (value) => {
+    editingChannel = {
+      ...editingChannel,
+      type: 24,
+      settings: '{"gemini_explicit_cache_upstream":true}',
+    }
+    const put = vi.spyOn(api, 'put')
+    const user = userEvent.setup()
+    render(<ConfigurationHarness currentRow={editingChannel} />)
+    await screen.findByDisplayValue('Existing channel')
+    const maxTTL = screen.getByRole('spinbutton', {
+      name: 'Explicit cache max TTL (seconds)',
+    })
+    fireEvent.change(maxTTL, { target: { value } })
+    await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+    await waitFor(() => expect(maxTTL).toHaveAttribute('aria-invalid', 'true'))
+    expect(screen.getByText('Enter a non-negative integer')).toBeVisible()
+    expect(put).not.toHaveBeenCalled()
+  }
+)
+
+test('other providers neither show nor keep the Gemini cache gateway settings', async () => {
+  editingChannel = {
+    ...editingChannel,
+    type: 1,
+    settings:
+      '{"gemini_explicit_cache_upstream":true,"gemini_explicit_cache_upstream_max_ttl_seconds":7200}',
+  }
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  await screen.findByDisplayValue('Existing channel')
+  expect(
+    screen.queryByRole('switch', { name: 'Explicit cache gateway' })
+  ).not.toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+  await waitFor(() => expect(put).toHaveBeenCalled())
+  const payload = put.mock.calls[0]?.[1] as { settings: string }
+  const settings = JSON.parse(payload.settings)
+  expect(settings).not.toHaveProperty('gemini_explicit_cache_upstream')
+  expect(settings).not.toHaveProperty(
+    'gemini_explicit_cache_upstream_max_ttl_seconds'
+  )
+})
+
 test('a saved upstream TLS verification skip marks Other Settings and turning it off saves the setting without it', async () => {
   editingChannel = {
     ...editingChannel,

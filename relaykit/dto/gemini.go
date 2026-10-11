@@ -587,6 +587,7 @@ type GeminiUsageMetadata struct {
 	ThoughtsTokenCount         int                         `json:"thoughtsTokenCount"`
 	CachedContentTokenCount    int                         `json:"cachedContentTokenCount"`
 	PromptTokensDetails        []GeminiPromptTokensDetails `json:"promptTokensDetails"`
+	CacheTokensDetails         []GeminiPromptTokensDetails `json:"cacheTokensDetails,omitempty"`
 	ToolUsePromptTokensDetails []GeminiPromptTokensDetails `json:"toolUsePromptTokensDetails"`
 	CandidatesTokensDetails    []GeminiPromptTokensDetails `json:"candidatesTokensDetails"`
 	BillingUsage               *BillingUsage               `json:"billing_usage,omitempty"`

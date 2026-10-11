@@ -140,6 +140,7 @@ import {
   ADD_MODE_OPTIONS,
   CLAUDE_FIELD_PASSTHROUGH_TYPES,
   CHANNEL_STATUS_LABELS,
+  CHANNEL_TYPE_GEMINI,
   CHANNEL_TYPE_NEW_API,
   CHANNEL_TYPE_OLLAMA,
   CHANNEL_TYPE_OPTIONS,
@@ -294,6 +295,8 @@ const SENSITIVE_FORM_FIELDS = [
   'vertex_key_type',
   'aws_key_type',
   'azure_responses_version',
+  'gemini_explicit_cache_upstream',
+  'gemini_explicit_cache_upstream_max_ttl_seconds',
   'force_format',
   'thinking_to_content',
   'proxy',
@@ -598,6 +601,7 @@ export function ChannelMutateDrawer({
   const currentModelMapping = formValues.model_mapping
   const awsKeyType = formValues.aws_key_type
   const vertexKeyType = formValues.vertex_key_type
+  const geminiExplicitCacheUpstream = formValues.gemini_explicit_cache_upstream
   const upstreamModelUpdateCheckEnabled =
     formValues.upstream_model_update_check_enabled
   const currentSettings = formValues.settings
@@ -4199,6 +4203,68 @@ export function ChannelMutateDrawer({
                   </FormItem>
                 )}
               />
+            )}
+
+            {/* Gemini (type 24): explicit caching through another gateway */}
+            {currentType === CHANNEL_TYPE_GEMINI && (
+              <>
+                <FormField
+                  control={form.control}
+                  name='gemini_explicit_cache_upstream'
+                  render={({ field }) => (
+                    <FormItem className='flex items-center justify-between gap-3'>
+                      <div className='space-y-0.5'>
+                        <FormLabel>{t('Explicit cache gateway')}</FormLabel>
+                        <FormDescription>
+                          {t(
+                            'Enable only when the custom Base URL points to another gateway that implements /v1beta/cachedContents, so explicit context caches can be created through this channel. The official Gemini address supports explicit caching without this setting.'
+                          )}
+                        </FormDescription>
+                      </div>
+                      <FormControl>
+                        <Switch
+                          disabled={sensitiveLocked}
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                        />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+                {geminiExplicitCacheUpstream && (
+                  <FormField
+                    control={form.control}
+                    name='gemini_explicit_cache_upstream_max_ttl_seconds'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>
+                          {t('Explicit cache max TTL (seconds)')}
+                        </FormLabel>
+                        {/* step='any' leaves range and integer checks to the
+                        schema, so the error shows under the field. */}
+                        <FormControl>
+                          <Input
+                            type='number'
+                            step='any'
+                            placeholder='0'
+                            {...field}
+                            value={field.value ?? 0}
+                            onChange={(event) =>
+                              field.onChange(Number(event.target.value))
+                            }
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          {t(
+                            'Caches created through this gateway are capped at this TTL. 0 means the channel adds no limit.'
+                          )}
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
+              </>
             )}
 
             {currentType === CHANNEL_TYPE_ADVANCED_CUSTOM && (

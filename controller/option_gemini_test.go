@@ -32,3 +32,27 @@ func TestUpdateOptionRejectsInvalidGeminiSafetyThreshold(t *testing.T) {
 	assert.False(t, payload.Success)
 	assert.Contains(t, payload.Message, "BLOCK_SOME")
 }
+
+func TestUpdateOptionRejectsInvalidGeminiExplicitCacheMaxTTL(t *testing.T) {
+	for _, value := range []string{`0`, `-1`, `"abc"`, `31708801`} {
+		t.Run(value, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			context, _ := gin.CreateTestContext(response)
+			context.Request = httptest.NewRequest(
+				http.MethodPut,
+				"/api/option/",
+				strings.NewReader(`{"key":"gemini.explicit_cache_max_ttl_seconds","value":`+value+`}`),
+			)
+
+			UpdateOption(context)
+
+			var payload struct {
+				Success bool   `json:"success"`
+				Message string `json:"message"`
+			}
+			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &payload))
+			assert.False(t, payload.Success)
+			assert.Contains(t, payload.Message, "Gemini explicit cache max TTL")
+		})
+	}
+}

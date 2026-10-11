@@ -263,6 +263,8 @@ const ESTIMATOR_VARS = [
   { var: 'img_o', stateKey: 'imageOutputTokens' },
   { var: 'ai', stateKey: 'audioInputTokens' },
   { var: 'ao', stateKey: 'audioOutputTokens' },
+  // Token·hours of explicit cache storage; not part of the input length.
+  { var: 'cs', stateKey: 'cacheStorageTokens' },
 ] as const
 
 export type ExtraTokenValues = Record<

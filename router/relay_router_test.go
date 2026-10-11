@@ -89,6 +89,40 @@ func TestListModelsSupportsOpenAIAndGeminiAuthentication(t *testing.T) {
 	}
 }
 
+func TestGeminiCachedContentsRouteAcceptsGeminiKeys(t *testing.T) {
+	setupRelayRouterTestDB(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.GeminiCachedContent{}))
+	user := model.User{Username: "cached-contents-user", Status: common.UserStatusEnabled, Group: "default", Quota: 100}
+	require.NoError(t, model.DB.Create(&user).Error)
+	require.NoError(t, model.DB.Create(&model.Token{UserId: user.Id, Key: "cachedcontentskey", Status: common.TokenStatusEnabled, ExpiredTime: -1, UnlimitedQuota: true}).Error)
+
+	engine := gin.New()
+	SetRelayRouter(engine)
+	for _, test := range []struct {
+		name   string
+		path   string
+		header string
+		status int
+	}{
+		{name: "Gemini API key header", path: "/v1beta/cachedContents", header: "sk-cachedcontentskey", status: http.StatusOK},
+		{name: "Gemini API key query", path: "/v1beta/cachedContents?key=sk-cachedcontentskey", status: http.StatusOK},
+		{name: "missing key", path: "/v1beta/cachedContents", status: http.StatusUnauthorized},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodGet, test.path, nil)
+			if test.header != "" {
+				request.Header.Set("x-goog-api-key", test.header)
+			}
+			engine.ServeHTTP(recorder, request)
+			require.Equal(t, test.status, recorder.Code, recorder.Body.String())
+			if test.status == http.StatusOK {
+				assert.JSONEq(t, `{}`, recorder.Body.String())
+			}
+		})
+	}
+}
+
 func setupRelayRouterTestDB(t *testing.T) {
 	t.Helper()
 

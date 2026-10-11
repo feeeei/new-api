@@ -39,6 +39,15 @@ relay.group_upstream_saturated: "目前分組上游負載已飽和，請稍後�
 relay.retry_get_channel_failed: "獲取分組 {{.Group}} 下模型 {{.Model}} 的可用管道失敗（retry）：{{.Error}}"
 relay.retry_no_available_channel: "分組 {{.Group}} 下模型 {{.Model}} 的可用管道不存在（retry）"
 relay.access_token_unsupported: "暫不支援使用 access token"
+gemini_cache.no_available_channel: "分組 {{.Group}} 下沒有支援顯式上下文快取的可用管道（模型 {{.Model}}）"
+gemini_cache.storage_not_priced: "模型 {{.Model}} 暫不支援顯式上下文快取：未設定快取儲存價格"
+gemini_cache.channel_unavailable: "持有該快取的管道暫時無法使用"
+gemini_cache.upstream_rejected: "上游管道拒絕了快取請求"
+gemini_cache.upstream_invalid_response: "上游回傳的快取回應無效"
+gemini_cache.upstream_failed: "上游快取請求失敗"
+gemini_cache.persist_failed: "儲存快取記錄失敗"
+gemini_cache.lookup_failed: "讀取快取記錄失敗"
+gemini_cache.id_allocation_failed: "分配快取 ID 失敗"
 
 # Emails and the name of the token created at registration
 user.default_token_name: "{{.Username}}的初始令牌"

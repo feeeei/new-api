@@ -11,6 +11,7 @@ var filterEvalOrder = []dto.ChannelFilterKind{
 	dto.FilterRequestPath,
 	dto.FilterTaskPluginIdentity,
 	dto.FilterResponsesWebSocket,
+	dto.FilterGeminiExplicitCache,
 }
 
 // ChannelSatisfiesFilters reports whether ch passes every filter.
@@ -124,6 +125,11 @@ func channelMatchesFilter(ch *Channel, modelName string, filter dto.ChannelFilte
 		default:
 			return false
 		}
+	case dto.FilterGeminiExplicitCache:
+		if _, excluded := filter.ExcludedChannelIDs[ch.Id]; excluded {
+			return false
+		}
+		return ch.SupportsGeminiExplicitCache()
 	default:
 		return true
 	}

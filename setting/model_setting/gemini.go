@@ -3,6 +3,9 @@ package model_setting
 import (
 	"fmt"
 	"slices"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/config"
@@ -28,7 +31,17 @@ type GeminiSettings struct {
 	ThinkingAdapterBudgetTokensPercentage float64           `json:"thinking_adapter_budget_tokens_percentage"`
 	FunctionCallThoughtSignatureEnabled   bool              `json:"function_call_thought_signature_enabled"`
 	RemoveFunctionResponseIdEnabled       bool              `json:"remove_function_response_id_enabled"`
+	// ExplicitCacheMaxTTLSeconds caps the TTL a client may create or extend an
+	// explicit context cache to. Storage is charged for the whole TTL up front.
+	ExplicitCacheMaxTTLSeconds int `json:"explicit_cache_max_ttl_seconds"`
 }
+
+const (
+	defaultGeminiExplicitCacheMaxTTLSeconds = 24 * 60 * 60
+	// maxGeminiExplicitCacheMaxTTLSeconds bounds the setting so storage
+	// token-hours stay far from float and quota limits.
+	maxGeminiExplicitCacheMaxTTLSeconds = 366 * 24 * 60 * 60
+)
 
 // 默认配置
 var defaultGeminiSettings = GeminiSettings{
@@ -52,6 +65,7 @@ var defaultGeminiSettings = GeminiSettings{
 	ThinkingAdapterBudgetTokensPercentage: 0.6,
 	FunctionCallThoughtSignatureEnabled:   true,
 	RemoveFunctionResponseIdEnabled:       true,
+	ExplicitCacheMaxTTLSeconds:            defaultGeminiExplicitCacheMaxTTLSeconds,
 }
 
 // 全局实例
@@ -96,6 +110,25 @@ func ValidateGeminiSafetySettings(value string) error {
 		if _, ok := validGeminiSafetySettings[threshold]; !ok {
 			return fmt.Errorf("invalid Gemini safety threshold %q for %q", threshold, category)
 		}
+	}
+	return nil
+}
+
+// GeminiExplicitCacheMaxTTL returns the longest TTL an explicit context cache
+// may be created or extended to.
+func GeminiExplicitCacheMaxTTL() time.Duration {
+	seconds := geminiSettings.ExplicitCacheMaxTTLSeconds
+	if seconds <= 0 || seconds > maxGeminiExplicitCacheMaxTTLSeconds {
+		seconds = defaultGeminiExplicitCacheMaxTTLSeconds
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+// ValidateGeminiExplicitCacheMaxTTLSeconds validates the option API value.
+func ValidateGeminiExplicitCacheMaxTTLSeconds(value string) error {
+	seconds, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || seconds <= 0 || seconds > maxGeminiExplicitCacheMaxTTLSeconds {
+		return fmt.Errorf("Gemini explicit cache max TTL must be an integer between 1 and %d seconds", maxGeminiExplicitCacheMaxTTLSeconds)
 	}
 	return nil
 }

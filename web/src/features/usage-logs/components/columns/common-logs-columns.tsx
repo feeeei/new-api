@@ -58,6 +58,7 @@ import type { UsageLog } from '../../data/schema'
 import {
   formatModelName,
   decodeBillingExprB64,
+  explicitCacheActionLabel,
   getTieredBillingSummary,
   hasAnyCacheTokens,
   parseLogOther,
@@ -169,6 +170,12 @@ function buildTypeDetailSegments(
   if (!other) return []
 
   const segments: DetailSegment[] = []
+  // Explicit cache charges lead with their action so they stand apart from requests.
+  if (other.explicit_cache) {
+    segments.push({
+      text: `${t('Explicit cache')} · ${explicitCacheActionLabel(other.explicit_cache.action, t)}`,
+    })
+  }
 
   const priceOpts = { digitsLarge: 4, digitsSmall: 6, abbreviate: false }
   const formatPrice = (price: number) =>
@@ -253,11 +260,14 @@ function buildTypeDetailSegments(
               'cacheCreate1hPrice',
             ].includes(entry.field)
         )
-        .map((entry) =>
-          entry.unit
+        .map((entry) => {
+          if (entry.unit === 'token_hour') {
+            return `${t(entry.shortLabel)} ${formatPriceCompact(entry.price)}/${t('{{unit}} tokens / hour', { unit: '1M' })}`
+          }
+          return entry.unit
             ? `${tieredSummary.tier.label || t('Default')} · ${t(entry.shortLabel)} ${formatPriceCompact(entry.price)}/${t(entry.unit)}`
             : `${t(entry.shortLabel)} ${formatPrice(entry.price)}`
-        )
+        })
       if (otherEntries.length > 0) {
         segments.push({
           text: otherEntries.join(' · '),

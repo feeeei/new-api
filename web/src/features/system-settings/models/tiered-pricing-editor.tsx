@@ -82,6 +82,7 @@ import {
   type TimeCondition,
   type TimeFunc,
 } from '@/features/pricing/lib/billing-expr'
+import { compileBillingExpression } from '@/features/pricing/lib/billing-expression/parser'
 import {
   parseVisualBillingDocument,
   serializeVisualBillingDocument,
@@ -317,7 +318,7 @@ function RawExprEditor({ exprString, onChange }: RawExprEditorProps) {
             {t('Variables')}: <code>len</code>, <code>p</code>, <code>c</code>,{' '}
             <code>cr</code>, <code>cc</code>, <code>cc1h</code>,{' '}
             <code>img</code>, <code>img_cr</code>, <code>img_o</code>,{' '}
-            <code>ai</code>, <code>ao</code>
+            <code>ai</code>, <code>ao</code>, <code>cs</code>
           </div>
           <div>
             {t('Functions')}: <code>tier(name, value)</code>,{' '}
@@ -738,12 +739,18 @@ function CostEstimator({ effectiveExpr, fullExpr, currency }: EstimatorProps) {
     imageOutputTokens: 0,
     audioInputTokens: 0,
     audioOutputTokens: 0,
+    cacheStorageTokens: 0,
   })
 
   const usesExtras = useMemo(
     () => exprUsesExtraVars(effectiveExpr),
     [effectiveExpr]
   )
+  // Only explicit cache charges carry storage, so its input appears when priced.
+  const usesStorage = useMemo(() => {
+    const compiled = compileBillingExpression(effectiveExpr)
+    return compiled.status === 'ready' && compiled.variables.has('cs')
+  }, [effectiveExpr])
 
   const tokens = useMemo(() => {
     const values = buildEstimatorTokens(promptTokens, completionTokens, extras)
@@ -826,13 +833,19 @@ function CostEstimator({ effectiveExpr, fullExpr, currency }: EstimatorProps) {
             // guaranteed to have a non-null `field` (the `len` condition-only
             // variable is filtered out). Narrow the type here for safety.
             if (!variable.field) return null
+            const isStorage = variable.group === 'storage'
+            if (isStorage && !usesStorage) return null
             const stateKey = variable.field.replace(
               'Price',
               'Tokens'
             ) as keyof ExtraTokenValues
             return (
               <div key={variable.key} className='space-y-1'>
-                <Label className='text-xs'>{t(variable.shortLabel)}</Label>
+                <Label className='text-xs'>
+                  {isStorage
+                    ? `${t(variable.shortLabel)} (${t('token·hours')})`
+                    : t(variable.shortLabel)}
+                </Label>
                 <DraftNumberInput
                   min={0}
                   value={extras[stateKey]}
@@ -905,6 +918,9 @@ Input side:
 - cc1h — cache-create token count (1-hour TTL, Claude-specific)
 - img — image input token count
 - ai — audio input token count
+
+Explicit context cache storage:
+- cs — cache storage in token-hours, priced in $ per 1M tokens per hour (e.g. cs * 4.5). Only explicit cache create/extend charges set it; ordinary requests use 0. It is not part of p, so it never changes p/c auto-exclusion
 
 Output side:
 - c — output token count. Also auto-excludes sub-categories priced separately

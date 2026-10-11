@@ -132,12 +132,14 @@ export function getSyncExpressionPricing(expression: string, t: (key: string) =>
   const config = tryParseVisualConfig(billingExpr)
   if (!config) return null
   // Do not turn malformed or overflowing upstream numbers into free prices.
-  const body = billingExpr.replace(/"(?:\\.|[^"\\])*"/g, '')
+  const body = billingExpr.replaceAll(/"(?:\\.|[^"\\])*"/g, '')
   for (const match of body.matchAll(/\*\s*([+\-\d.eE]+)/g)) {
     if (!Number.isFinite(Number(match[1])) || Number(match[1]) < 0) return null
   }
-  const fields = BILLING_PRICING_VARS.filter((field) =>
+  const fields = BILLING_PRICING_VARS.flatMap((field) =>
     field.tierField && new RegExp(`\\b${field.key}\\s*\\*`).test(body)
+      ? [{ ...field, tierField: field.tierField }]
+      : []
   )
   const conditionLabels = { p: t('Input tokens'), c: t('Output tokens'), len: t('Length') }
   return {
@@ -148,8 +150,12 @@ export function getSyncExpressionPricing(expression: string, t: (key: string) =>
         `${conditionLabels[condition.var]} ${condition.op} ${Number(condition.value).toLocaleString()}`
       ).join(' ∧ '),
       lines: fields.map((field) => ({
-        label: t(field.shortLabel),
-        value: `$${formatPricingNumber(Number(tier[field.tierField!]))}`,
+        // Storage is priced per 1M token-hours rather than per 1M tokens.
+        label:
+          field.group === 'storage'
+            ? `${t(field.shortLabel)} (${t('token·hours')})`
+            : t(field.shortLabel),
+        value: `$${formatPricingNumber(Number(tier[field.tierField]))}`,
       })),
     })),
   }

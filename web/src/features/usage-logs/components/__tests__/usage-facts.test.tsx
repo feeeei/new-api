@@ -17,8 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, within } from '@testing-library/react'
-import i18next from 'i18next'
+import { act, render, screen, within } from '@testing-library/react'
+import i18next, { createInstance } from 'i18next'
+import { I18nextProvider } from 'react-i18next'
 import { afterEach, beforeAll, describe, expect, test } from 'vitest'
 
 import type { UsageLog } from '../../data/schema'
@@ -64,7 +65,11 @@ function makeLog(other: LogOtherData): UsageLog {
   }
 }
 
-function renderDetails(other: LogOtherData, promptTokens = 0): QueryClient {
+function renderDetails(
+  other: LogOtherData,
+  promptTokens = 0,
+  translations = i18next
+): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -77,15 +82,17 @@ function renderDetails(other: LogOtherData, promptTokens = 0): QueryClient {
   )
 
   render(
-    <QueryClientProvider client={queryClient}>
-      <DetailsDialog
-        log={{ ...makeLog(other), prompt_tokens: promptTokens }}
-        isAdmin={false}
-        isRoot={false}
-        open
-        onOpenChange={() => undefined}
-      />
-    </QueryClientProvider>
+    <I18nextProvider i18n={translations}>
+      <QueryClientProvider client={queryClient}>
+        <DetailsDialog
+          log={{ ...makeLog(other), prompt_tokens: promptTokens }}
+          isAdmin={false}
+          isRoot={false}
+          open
+          onOpenChange={() => undefined}
+        />
+      </QueryClientProvider>
+    </I18nextProvider>
   )
   return queryClient
 }
@@ -93,6 +100,197 @@ function renderDetails(other: LogOtherData, promptTokens = 0): QueryClient {
 function rowValue(label: string): string | null {
   return screen.getByText(label).nextElementSibling?.textContent ?? null
 }
+
+const storageExpression =
+  'tier("standard", p * 1.25 + c * 10 + cr * 0.125 + cs * 4.5)'
+const cancelledStorage =
+  'Explicit cache creation was cancelled because the storage charge exceeds the available quota; only the cached input tokens were charged'
+
+function explicitCacheCharge(
+  action: 'create' | 'extend',
+  seconds: number,
+  storageTokenHours: number
+): LogOtherData {
+  return {
+    group_ratio: 1,
+    billing_mode: 'tiered_expr',
+    expr_b64: btoa(storageExpression),
+    matched_tier: 'standard',
+    billing_tokens: {
+      p: action === 'create' ? 12000 : 0,
+      c: 0,
+      len: 12000,
+      cr: 0,
+      cs: storageTokenHours,
+    },
+    explicit_cache: {
+      action,
+      name: 'cachedContents/abc123',
+      tokens: 12000,
+      seconds,
+      storage_token_hours: storageTokenHours,
+    },
+    content_parts: [
+      {
+        key:
+          action === 'create'
+            ? 'Explicit cache created: {{tokens}} tokens stored for {{seconds}} seconds'
+            : 'Explicit cache extended: {{tokens}} tokens stored for {{seconds}} more seconds',
+        params: { tokens: 12000, seconds },
+      },
+    ],
+  }
+}
+
+describe('explicit cache charges', () => {
+  const queryClients: QueryClient[] = []
+  afterEach(() => {
+    for (const queryClient of queryClients) queryClient.clear()
+    queryClients.length = 0
+  })
+
+  test.each([
+    {
+      action: 'create' as const,
+      seconds: 3600,
+      hours: 12000,
+      label: 'Create',
+      duration: '1 hour (3,600 seconds)',
+      storage: '12,000 token·hours',
+      content: 'Explicit cache created: 12000 tokens stored for 3600 seconds',
+    },
+    {
+      action: 'extend' as const,
+      seconds: 1800,
+      hours: 6000,
+      label: 'Extend',
+      duration: '30 minutes (1,800 seconds)',
+      storage: '6,000 token·hours',
+      content:
+        'Explicit cache extended: 12000 tokens stored for 1800 more seconds',
+    },
+  ])(
+    'a $action charge shows its cache, storage time and token-hours with the storage price',
+    ({ action, seconds, hours, label, duration, storage, content }) => {
+      queryClients.push(
+        renderDetails(
+          explicitCacheCharge(action, seconds, hours),
+          action === 'create' ? 12000 : 0
+        )
+      )
+      expect(rowValue('Action')).toBe(label)
+      expect(rowValue('Cache name')).toBe('cachedContents/abc123')
+      expect(rowValue('Cached tokens')).toBe('12,000')
+      expect(rowValue('Storage duration')).toBe(duration)
+      expect(rowValue('Storage')).toBe(storage)
+      expect(screen.getByText(content)).toBeVisible()
+      expect(
+        screen
+          .getAllByText('Cache Storage')
+          .map((element) => element.nextElementSibling?.textContent)
+      ).toContain('$4.5/1M tokens / hour')
+      expect(
+        screen.getAllByText('Cache Storage / 1M tokens / hour').length
+      ).toBeGreaterThan(0)
+      expect(screen.queryByText(cancelledStorage)).not.toBeInTheDocument()
+    }
+  )
+
+  test('the billable token breakdown lists storage in token-hours', () => {
+    queryClients.push(
+      renderDetails(explicitCacheCharge('create', 3600, 12000), 12000)
+    )
+    const billable = within(
+      screen.getByRole('group', { name: 'Billable token breakdown' })
+    )
+    expect(
+      billable.getByText('Cache Storage').nextElementSibling
+    ).toHaveTextContent('12,000 token·hours')
+    expect(billable.getByText('Input').nextElementSibling).toHaveTextContent(
+      '12,000'
+    )
+  })
+
+  test('a creation whose storage was cancelled explains that only input was charged', () => {
+    queryClients.push(
+      renderDetails(
+        {
+          ...explicitCacheCharge('create', 0, 0),
+          billing_tokens: { p: 12000, c: 0, len: 12000, cr: 0 },
+          explicit_cache: {
+            action: 'create',
+            name: 'cachedContents/abc123',
+            tokens: 12000,
+            seconds: 0,
+            storage_token_hours: 0,
+            storage_cancelled: true,
+          },
+          content_parts: [{ key: cancelledStorage }],
+        },
+        12000
+      )
+    )
+    const section = screen.getByText('Explicit cache').parentElement
+    if (!section) throw new Error('Expected the explicit cache section')
+    expect(within(section).getByText(cancelledStorage)).toBeVisible()
+    expect(rowValue('Storage duration')).toBe('0 seconds')
+    expect(rowValue('Storage')).toBe('0 token·hours')
+    expect(screen.queryByText('Cache Storage')).not.toBeInTheDocument()
+    expect(
+      screen.queryByText('Cache Storage / 1M tokens / hour')
+    ).not.toBeInTheDocument()
+  })
+
+  test('an ordinary request on a storage-priced model omits storage details', () => {
+    queryClients.push(
+      renderDetails(
+        {
+          group_ratio: 1,
+          billing_mode: 'tiered_expr',
+          expr_b64: btoa(storageExpression),
+          matched_tier: 'standard',
+          cache_tokens: 100,
+          billing_tokens: { p: 900, c: 10, len: 1000, cr: 100 },
+        },
+        1000
+      )
+    )
+    expect(screen.queryByText('Explicit cache')).not.toBeInTheDocument()
+    expect(screen.queryByText('Cache Storage')).not.toBeInTheDocument()
+    expect(
+      screen.queryByText('Cache Storage / 1M tokens / hour')
+    ).not.toBeInTheDocument()
+    expect(
+      screen
+        .getAllByText('Cache Read')
+        .map((element) => element.nextElementSibling?.textContent)
+    ).toContain('$0.125/M')
+  })
+
+  test('reformats cached tokens and storage time after a language switch', async () => {
+    const translations = createInstance()
+    await translations.init({
+      lng: 'en',
+      fallbackLng: 'en',
+      resources: { en: { translation: {} }, fr: { translation: {} } },
+    })
+    queryClients.push(
+      renderDetails(
+        explicitCacheCharge('create', 3600, 12000),
+        12000,
+        translations
+      )
+    )
+    expect(rowValue('Cached tokens')).toBe('12,000')
+    expect(rowValue('Storage duration')).toBe('1 hour (3,600 seconds)')
+    await act(() => translations.changeLanguage('fr'))
+    // French groups digits and separates units with no-break spaces.
+    expect(rowValue('Cached tokens')).toMatch(/^12\s000$/u)
+    expect(rowValue('Storage duration')).toMatch(
+      /^1\sheure\s\(3\s600\ssecondes\)$/u
+    )
+  })
+})
 
 test('shows the recorded request and response models in log details', () => {
   const queryClient = renderDetails({

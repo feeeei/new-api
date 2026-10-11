@@ -204,6 +204,44 @@ describe('expression price summaries', () => {
     expect(summary?.secondaryEntries).toEqual([])
   })
 
+  test.each([
+    ['M' as const, '$4.5'],
+    ['K' as const, '$0.0045'],
+  ])(
+    'lists a cache storage price per %s tokens per hour as a secondary price',
+    (tokenUnit, formatted) => {
+      const summary = getDynamicPricingSummary(
+        pricingModel({
+          billing_mode: 'tiered_expr',
+          billing_expr:
+            'tier("standard", p * 1.25 + c * 10 + cr * 0.125 + cs * 4.5)',
+        }),
+        { tokenUnit }
+      )
+      expect(summary?.primaryEntries.map((entry) => entry.field)).toEqual([
+        'inputPrice',
+        'outputPrice',
+      ])
+      const storage = summary?.secondaryEntries.find(
+        (entry) => entry.key === 'cs'
+      )
+      expect(storage).toMatchObject({
+        field: 'cacheStoragePrice',
+        shortLabel: 'Cache Storage',
+        unit: 'token_hour',
+        value: 4.5,
+        formatted,
+      })
+      assert(storage)
+      expect(getDynamicPriceUnitLabelKey(storage)).toBe(
+        '{{unit}} tokens / hour'
+      )
+      expect(
+        summary?.secondaryEntries.find((entry) => entry.key === 'cr')?.unit
+      ).toBe('token')
+    }
+  )
+
   test('includes a free task tier in its range', () => {
     const summary = getDynamicPricingSummary(
       pricingModel({

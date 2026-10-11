@@ -102,6 +102,11 @@ export const STATIC_I18N_KEYS = [
   // Image cache billing and legacy price conversion.
   'Image cache input price',
   'Image Cache',
+  // Explicit context cache storage pricing and gateway log content.
+  'Cache storage price',
+  'Cache Storage',
+  'Explicit cache created: {{tokens}} tokens stored for {{seconds}} seconds',
+  'Explicit cache extended: {{tokens}} tokens stored for {{seconds}} more seconds',
   'Per-token (deprecated)',
   'Per-request (deprecated)',
   'This model already uses an expression.',

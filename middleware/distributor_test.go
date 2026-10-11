@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -14,6 +16,8 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -340,4 +344,172 @@ func TestSharedEndpointRebindsToBoundNewAPIExtension(t *testing.T) {
 	require.Nil(t, SetupContextForSelectedChannel(c, channel, "task-model"))
 	assert.Equal(t, "alpha", c.GetString("task_plugin_key"), "the first bound candidate executes regardless of the earlier pin")
 	assert.Equal(t, "alpha", c.MustGet(jsplugin.ContextKeyPinnedEndpoint).(jsplugin.PinnedEndpoint).Plugin.Meta.Key)
+}
+
+// setupGeminiCachedContentDistributeTest stores two Gemini channels serving
+// one model: a single-key channel preferred by priority, and a lower-priority
+// multi-key channel whose third key holds an explicit cache owned by token 11.
+func setupGeminiCachedContentDistributeTest(t *testing.T) (single, multi *model.Channel, record *model.GeminiCachedContent) {
+	t.Helper()
+	require.NoError(t, i18n.Init())
+	previousDB := model.DB
+	previousMain, previousLog := common.MainDatabaseType(), common.LogDatabaseType()
+	previousMaster, previousSQLite := common.IsMasterNode, common.SQLitePath
+	previousRedis, previousMemory := common.RedisEnabled, common.MemoryCacheEnabled
+	common.IsMasterNode, common.RedisEnabled, common.MemoryCacheEnabled = false, false, false
+	common.SQLitePath = filepath.Join(t.TempDir(), "gemini-cache-distribute.db")
+	t.Setenv("SQL_DSN", "")
+	t.Setenv("LOG_SQL_DSN", "")
+	require.NoError(t, model.InitDB())
+	sqlDB, err := model.DB.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	t.Cleanup(func() {
+		model.DB = previousDB
+		common.SetDatabaseTypes(previousMain, previousLog)
+		common.IsMasterNode, common.SQLitePath = previousMaster, previousSQLite
+		common.RedisEnabled, common.MemoryCacheEnabled = previousRedis, previousMemory
+		require.NoError(t, sqlDB.Close())
+	})
+	require.NoError(t, model.DB.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.GeminiCachedContent{}))
+
+	single = &model.Channel{Name: "gemini-single", Type: constant.ChannelTypeGemini, Key: "single-key", Status: common.ChannelStatusEnabled,
+		Group: "default", Models: "gemini-2.5-flash", Priority: common.GetPointer(int64(10))}
+	multi = &model.Channel{Name: "gemini-multi", Type: constant.ChannelTypeGemini, Key: "multi-key-0\nmulti-key-1\nmulti-key-2", Status: common.ChannelStatusEnabled,
+		Group: "default", Models: "gemini-2.5-flash", Priority: common.GetPointer(int64(0)),
+		ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 3, MultiKeyMode: constant.MultiKeyModePolling}}
+	for _, channel := range []*model.Channel{single, multi} {
+		require.NoError(t, model.DB.Create(channel).Error)
+		require.NoError(t, channel.AddAbilities(nil))
+	}
+	record = &model.GeminiCachedContent{
+		PublicId: "boundcache", UserId: 7, TokenId: 11, UsingGroup: "default", ChannelId: multi.Id, KeyIndex: 2,
+		KeyFingerprint: model.GeminiCacheCredentialFingerprint(constant.ChannelTypeGemini, "multi-key-2"),
+		UpstreamName:   "cachedContents/upstream-1", Model: "gemini-2.5-flash", UpstreamModel: "models/gemini-2.5-flash",
+		TotalTokenCount: 4096, ExpireTime: time.Now().Add(time.Hour).Unix(),
+	}
+	require.NoError(t, model.CreateGeminiCachedContent(record))
+	return single, multi, record
+}
+
+func TestDistributeBindsGeminiCachedContentToItsKey(t *testing.T) {
+	single, multi, record := setupGeminiCachedContentDistributeTest(t)
+	distribute := func(tokenID int, modelName, body string, modelLimit map[string]bool) (*gin.Context, *httptest.ResponseRecorder) {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/"+modelName+":generateContent", strings.NewReader(body))
+		c.Request.Header.Set("Content-Type", "application/json")
+		c.Request.Header.Set("Accept-Language", "en")
+		common.SetContextKey(c, constant.ContextKeyTokenId, tokenID)
+		common.SetContextKey(c, constant.ContextKeyUsingGroup, "default")
+		common.SetContextKey(c, constant.ContextKeyUserGroup, "default")
+		if modelLimit != nil {
+			common.SetContextKey(c, constant.ContextKeyTokenModelLimitEnabled, true)
+			common.SetContextKey(c, constant.ContextKeyTokenModelLimit, modelLimit)
+		}
+		Distribute()(c)
+		return c, recorder
+	}
+	boundBody := `{"cachedContent":"cachedContents/` + record.PublicId + `","contents":[{"role":"user","parts":[{"text":"hi"}]}]}`
+
+	t.Run("bound request runs on the key holding the cache", func(t *testing.T) {
+		c, _ := distribute(11, "gemini-2.5-flash", boundBody, nil)
+		require.False(t, c.IsAborted())
+		assert.Equal(t, multi.Id, common.GetContextKeyInt(c, constant.ContextKeyChannelId), "the cache outranks channel priority")
+		assert.Equal(t, "multi-key-2", common.GetContextKeyString(c, constant.ContextKeyChannelKey))
+		assert.True(t, common.GetContextKeyBool(c, constant.ContextKeyChannelIsMultiKey))
+		assert.Equal(t, 2, common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex))
+		assert.NotNil(t, service.GetGeminiCachedContentBinding(c))
+		assert.True(t, service.GetChannelConstraints(c).SuppressesRetry(), "a bound request never moves to another channel")
+	})
+
+	t.Run("request without cachedContent is routed as before", func(t *testing.T) {
+		c, _ := distribute(11, "gemini-2.5-flash", `{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`, nil)
+		require.False(t, c.IsAborted())
+		assert.Equal(t, single.Id, common.GetContextKeyInt(c, constant.ContextKeyChannelId))
+		assert.Equal(t, "single-key", common.GetContextKeyString(c, constant.ContextKeyChannelKey))
+		assert.Nil(t, service.GetGeminiCachedContentBinding(c))
+		assert.False(t, service.GetChannelConstraints(c).SuppressesRetry())
+	})
+
+	t.Run("token model limit is checked before the cache", func(t *testing.T) {
+		c, recorder := distribute(11, "gemini-2.5-flash", boundBody, map[string]bool{"gemini-2.5-pro": true})
+		assert.True(t, c.IsAborted())
+		assert.Equal(t, http.StatusForbidden, recorder.Code)
+		assert.Contains(t, recorder.Body.String(), "This token has no access to model gemini-2.5-flash")
+		assert.Nil(t, service.GetGeminiCachedContentBinding(c))
+	})
+
+	for _, tc := range []struct {
+		name      string
+		tokenID   int
+		modelName string
+		body      string
+		status    int
+		wantBody  string
+	}{
+		{"another token of the same user", 12, "gemini-2.5-flash", boundBody, http.StatusForbidden, string(service.GeminiCachedContentNotFoundBody)},
+		{"model differs from the cache", 11, "gemini-2.5-pro", boundBody, http.StatusBadRequest,
+			`{"error":{"code":400,"message":"Model used by GenerateContent request (models/gemini-2.5-pro) and CachedContent (models/gemini-2.5-flash) has to be the same.","status":"INVALID_ARGUMENT"}}`},
+		{"snake case reference", 11, "gemini-2.5-flash", `{"cached_content":"cachedContents/` + record.PublicId + `","contents":[]}`, http.StatusBadRequest,
+			`{"error":{"code":400,"message":"cached_content is not supported, use cachedContent","status":"INVALID_ARGUMENT"}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, recorder := distribute(tc.tokenID, tc.modelName, tc.body, nil)
+			assert.True(t, c.IsAborted())
+			assert.Equal(t, tc.status, recorder.Code)
+			assert.Equal(t, "application/json", recorder.Header().Get("Content-Type"))
+			assert.JSONEq(t, tc.wantBody, recorder.Body.String())
+		})
+	}
+
+	unavailable := `{"error":{"code":503,"message":"The channel holding this cached content is temporarily unavailable","status":"UNAVAILABLE"}}`
+	rotatedKey := "multi-key-0\nmulti-key-1\nrotated-key"
+	for _, tc := range []struct {
+		name   string
+		change map[string]any
+	}{
+		{"bound channel disabled", map[string]any{"status": common.ChannelStatusManuallyDisabled}},
+		{"bound key rotated", map[string]any{"key": rotatedKey}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", multi.Id).Updates(tc.change).Error)
+			t.Cleanup(func() {
+				require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", multi.Id).
+					Updates(map[string]any{"status": common.ChannelStatusEnabled, "key": multi.Key}).Error)
+			})
+			c, recorder := distribute(11, "gemini-2.5-flash", boundBody, nil)
+			assert.True(t, c.IsAborted())
+			assert.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+			assert.JSONEq(t, unavailable, recorder.Body.String())
+		})
+	}
+
+	t.Run("channel setup refuses a credential that no longer holds the cache", func(t *testing.T) {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-2.5-flash:generateContent", nil)
+		service.SetGeminiCachedContentBinding(c, &service.GeminiCachedContentBinding{Record: record})
+		rotated := *multi
+		rotated.Key = rotatedKey
+		setupErr := SetupContextForSelectedChannel(c, &rotated, "gemini-2.5-flash")
+		require.NotNil(t, setupErr)
+		assert.Equal(t, http.StatusServiceUnavailable, setupErr.StatusCode)
+		assert.True(t, types.IsSkipRetryError(setupErr))
+		assert.False(t, types.IsChannelError(setupErr), "a rotated key must not disable the channel")
+	})
+
+	t.Run("every native action rejects a reference the token does not own", func(t *testing.T) {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		body := `{"cachedContent":"` + record.UpstreamName + `","contents":[{"role":"user","parts":[{"text":"hi"}]}]}`
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/models/gemini-2.5-flash:countTokens", strings.NewReader(body))
+		c.Request.Header.Set("Content-Type", "application/json")
+		common.SetContextKey(c, constant.ContextKeyTokenId, 11)
+		common.SetContextKey(c, constant.ContextKeyUsingGroup, "default")
+		common.SetContextKey(c, constant.ContextKeyUserGroup, "default")
+		Distribute()(c)
+		assert.True(t, c.IsAborted())
+		assert.Equal(t, http.StatusForbidden, recorder.Code)
+		assert.JSONEq(t, string(service.GeminiCachedContentNotFoundBody), recorder.Body.String())
+	})
 }

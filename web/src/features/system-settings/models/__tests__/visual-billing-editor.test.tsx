@@ -181,6 +181,7 @@ test('retains all pricing inputs and switches inside an expanded rule', async ()
     'Cache read price',
     'Cache create price',
     'Cache create (1h) price',
+    'Cache storage price',
     'Image input price',
     'Image cache input price',
     'Image output price',
@@ -448,6 +449,97 @@ test('edits image cache pricing and preserves an explicitly free cache lane', ()
   expect(
     screen.getByRole('checkbox', { name: 'Include Image cache input price' })
   ).toBeChecked()
+})
+
+describe('explicit cache storage pricing', () => {
+  const storageSource =
+    'tier("standard", p * 1.25 + c * 10 + cr * 0.125 + cs * 4.5)'
+
+  test('edits the storage price per 1M tokens per hour without rewriting other prices', () => {
+    const onBillingExprChange = vi.fn()
+    render(
+      <TieredPricingEditor
+        billingExpr={storageSource}
+        requestRuleExpr=''
+        onBillingExprChange={onBillingExprChange}
+        onRequestRuleExprChange={vi.fn()}
+      />
+    )
+    const tier = within(
+      screen.getByRole('group', { name: 'Pricing tier standard' })
+    )
+    const price = tier.getByRole('textbox', { name: 'Cache storage price' })
+    expect(price).toHaveValue('4.5')
+    expect(tier.getByText('$/1M tokens / hour')).toBeVisible()
+    expect(
+      tier.getByRole('button', { name: 'Edit pricing rule standard' })
+    ).toHaveTextContent('Cache Storage: $4.5/1M tokens / hour')
+    expect(screen.getByText('Cache Storage (token·hours)')).toBeVisible()
+    expect(onBillingExprChange).not.toHaveBeenCalled()
+
+    fireEvent.change(price, { target: { value: '4' } })
+    const generated = onBillingExprChange.mock.lastCall?.[0]
+    expect(generated).toBe(storageSource.replace('cs * 4.5', 'cs * 4'))
+    expect(
+      evaluateBillingExpression(generated, {
+        tokens: { p: 100000, c: 0, cr: 0, cs: 2400000 },
+      })
+    ).toMatchObject({ status: 'success', cost: 9_725_000 })
+  })
+
+  test('removes the storage price and its estimator input when excluded', async () => {
+    const onBillingExprChange = vi.fn()
+    render(
+      <TieredPricingEditor
+        billingExpr={storageSource}
+        requestRuleExpr=''
+        onBillingExprChange={onBillingExprChange}
+        onRequestRuleExprChange={vi.fn()}
+      />
+    )
+    const user = userEvent.setup()
+    await user.click(
+      screen.getByRole('checkbox', { name: 'Include Cache storage price' })
+    )
+    expect(onBillingExprChange).toHaveBeenLastCalledWith(
+      'tier("standard", p * 1.25 + c * 10 + cr * 0.125)'
+    )
+    expect(
+      screen.getByRole('textbox', { name: 'Cache storage price' })
+    ).toBeDisabled()
+    expect(
+      screen.queryByText('Cache Storage (token·hours)')
+    ).not.toBeInTheDocument()
+    expect(screen.getByText('Cache Read')).toBeVisible()
+  })
+
+  test('adds a storage price to a tier that had none, starting from zero', async () => {
+    const onBillingExprChange = vi.fn()
+    render(
+      <TieredPricingEditor
+        billingExpr='tier("base", p * 2 + c * 8)'
+        requestRuleExpr=''
+        onBillingExprChange={onBillingExprChange}
+        onRequestRuleExprChange={vi.fn()}
+      />
+    )
+    const include = screen.getByRole('checkbox', {
+      name: 'Include Cache storage price',
+    })
+    expect(include).not.toBeChecked()
+    const user = userEvent.setup()
+    await user.click(include)
+    expect(onBillingExprChange).toHaveBeenLastCalledWith(
+      'tier("base", p * 2 + c * 8 + cs * 0)'
+    )
+    fireEvent.change(
+      screen.getByRole('textbox', { name: 'Cache storage price' }),
+      { target: { value: '4.5' } }
+    )
+    expect(onBillingExprChange).toHaveBeenLastCalledWith(
+      'tier("base", p * 2 + c * 8 + cs * 4.5)'
+    )
+  })
 })
 
 describe('visual time billing editor', () => {

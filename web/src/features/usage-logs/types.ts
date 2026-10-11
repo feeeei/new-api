@@ -114,6 +114,19 @@ export interface ToolSurchargeItem {
   price: number
 }
 
+/** Explicit context cache create/extend charge recorded on a consume log. */
+export interface ExplicitCacheCharge {
+  action?: 'create' | 'extend' | string
+  /** Gateway resource name, `cachedContents/<id>`. */
+  name?: string
+  tokens?: number
+  /** Storage time bought by this charge; 0 when storage was cancelled. */
+  seconds?: number
+  storage_token_hours?: number
+  /** Creation could not afford storage, so only the cached input was charged. */
+  storage_cancelled?: boolean
+}
+
 export interface LogOtherData {
   admin_info?: {
     request_policy?: PolicyEvent[]
@@ -236,6 +249,7 @@ export interface LogOtherData {
   file_search_call_count?: number
   file_search_price?: number
   tool_surcharges?: ToolSurchargeItem[]
+  explicit_cache?: ExplicitCacheCharge
   audio_input_seperate_price?: boolean
   audio_input_token_count?: number
   audio_input_price?: number

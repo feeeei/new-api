@@ -249,6 +249,10 @@ func MergeGeminiUsageMetadataNonZero(current *GeminiUsageMetadata, incoming *Gem
 		merged.CachedContentTokenCount = incoming.CachedContentTokenCount
 	}
 	merged.PromptTokensDetails = mergeGeminiTokenDetails(merged.PromptTokensDetails, incoming.PromptTokensDetails)
+	// Usage that never reports a cache breakdown keeps a nil list.
+	if len(incoming.CacheTokensDetails) > 0 {
+		merged.CacheTokensDetails = mergeGeminiTokenDetails(merged.CacheTokensDetails, incoming.CacheTokensDetails)
+	}
 	merged.ToolUsePromptTokensDetails = mergeGeminiTokenDetails(merged.ToolUsePromptTokensDetails, incoming.ToolUsePromptTokensDetails)
 	merged.CandidatesTokensDetails = mergeGeminiTokenDetails(merged.CandidatesTokensDetails, incoming.CandidatesTokensDetails)
 	if incoming.BillingUsage != nil {

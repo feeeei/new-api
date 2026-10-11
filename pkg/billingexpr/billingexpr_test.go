@@ -650,6 +650,33 @@ func TestMixedCacheFields_AllCacheZero(t *testing.T) {
 	}
 }
 
+// Explicit cache storage (cs, token-hours) prices create and extend charges;
+// ordinary requests leave it zero and keep their price.
+func TestCacheStorageVariable(t *testing.T) {
+	const expression = `len <= 200000 ? tier("standard", p * 1.25 + c * 10 + cr * 0.125 + cs * 4.5) : tier("long_context", p * 2.5 + c * 15 + cr * 0.25 + cs * 4.5)`
+	assert.True(t, billingexpr.UsedVars(expression)["cs"])
+	assert.False(t, billingexpr.UsedVars(claudeExpr)["cs"])
+
+	for _, tc := range []struct {
+		name   string
+		params billingexpr.TokenParams
+		cost   float64
+		tier   string
+	}{
+		{"request without storage", billingexpr.TokenParams{P: 100000, C: 1000, Len: 120000, CR: 20000}, 100000*1.25 + 1000*10 + 20000*0.125, "standard"},
+		{"create charges input and storage", billingexpr.TokenParams{P: 100000, Len: 100000, CS: 100000 * 2.5}, 100000*1.25 + 100000*2.5*4.5, "standard"},
+		{"long context create", billingexpr.TokenParams{P: 300000, Len: 300000, CS: 300000}, 300000*2.5 + 300000*4.5, "long_context"},
+		{"extension charges storage only", billingexpr.TokenParams{Len: 300000, CS: 300000 * 0.5}, 300000 * 0.5 * 4.5, "long_context"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cost, trace, err := billingexpr.RunExpr(expression, tc.params)
+			require.NoError(t, err)
+			assert.InDelta(t, tc.cost, cost, 1e-6)
+			assert.Equal(t, tc.tier, trace.MatchedTier)
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Backward compatibility: p+c only expressions still work with TokenParams
 // ---------------------------------------------------------------------------

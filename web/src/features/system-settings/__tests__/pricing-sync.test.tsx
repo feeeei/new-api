@@ -178,6 +178,31 @@ describe('pricing synchronization', () => {
     expect(screen.getByText(custom)).toBeVisible()
   })
 
+  it('labels an upstream cache storage price as a per token-hour rate', () => {
+    render(
+      <TableFixture
+        prices={{
+          m: {
+            current: {},
+            upstreams: {
+              upstream: {
+                billing_mode: 'tiered_expr',
+                billing_expr:
+                  'tier("standard", p * 1.25 + c * 10 + cr * 0.125 + cs * 4.5)',
+              },
+            },
+          },
+        }}
+      />
+    )
+    expect(
+      screen.getByText('Cache Storage (token·hours)').nextElementSibling
+    ).toHaveTextContent('$4.5')
+    expect(screen.getByText('Cache Read').nextElementSibling).toHaveTextContent(
+      '$0.125'
+    )
+  })
+
   it('shows a mobile comparison list and preserves source-wide selection', async () => {
     const original = window.matchMedia
     vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({

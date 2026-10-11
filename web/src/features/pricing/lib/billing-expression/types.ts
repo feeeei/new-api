@@ -28,6 +28,8 @@ export const TOKEN_VARIABLES = [
   'img_o',
   'ai',
   'ao',
+  // Explicit context cache storage in token·hours; ordinary requests use 0.
+  'cs',
 ] as const
 export type TokenVariable = (typeof TOKEN_VARIABLES)[number]
 export const BILLING_VARIABLES = [...TOKEN_VARIABLES, 'image_count'] as const

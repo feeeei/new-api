@@ -5,11 +5,15 @@ type ChannelPinSource string
 const (
 	PinSourceToken      ChannelPinSource = "token"       // Rank 0, highest
 	PinSourceOriginTask ChannelPinSource = "origin_task" // Rank 10
+	// PinSourceGeminiCachedContent routes a request that references an explicit
+	// context cache to the channel holding it.
+	PinSourceGeminiCachedContent ChannelPinSource = "gemini_cached_content" // Rank 5
 )
 
 const (
-	PinRankToken      = 0
-	PinRankOriginTask = 10
+	PinRankToken               = 0
+	PinRankGeminiCachedContent = 5
+	PinRankOriginTask          = 10
 )
 
 type PinRetryMode int
@@ -39,6 +43,9 @@ const (
 	FilterRequestPath        ChannelFilterKind = "request_path"
 	FilterTaskPluginIdentity ChannelFilterKind = "task_plugin_identity"
 	FilterResponsesWebSocket ChannelFilterKind = "responses_websocket"
+	// FilterGeminiExplicitCache keeps channels that can create explicit
+	// context caches and are not listed in ExcludedChannelIDs.
+	FilterGeminiExplicitCache ChannelFilterKind = "gemini_explicit_cache"
 )
 
 type ChannelFilter struct {
@@ -47,6 +54,7 @@ type ChannelFilter struct {
 	TaskPluginKey          string
 	TaskPluginKeys         []string
 	TaskPluginChannelTypes []int
+	ExcludedChannelIDs     map[int]struct{}
 }
 
 type ChannelConstraints struct {

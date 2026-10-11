@@ -53,6 +53,7 @@ export type BillingVar = {
   side: 'input' | 'output' | 'condition'
   isBase?: boolean
   isConditionOnly?: boolean
+  /** `storage` prices are per token per hour and apply only to explicit cache charges. */
   group?: string
 }
 
@@ -119,6 +120,15 @@ export const BILLING_VARS: BillingVar[] = [
     shortLabel: 'Cache Write (1h)',
     side: 'input',
     group: 'cache',
+  },
+  {
+    key: 'cs',
+    field: 'cacheStoragePrice',
+    tierField: 'cache_storage_unit_cost',
+    label: 'Cache storage price',
+    shortLabel: 'Cache Storage',
+    side: 'input',
+    group: 'storage',
   },
   {
     key: 'img',

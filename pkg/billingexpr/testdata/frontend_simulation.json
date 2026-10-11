@@ -419,5 +419,18 @@
         "conditionText": "Text-only requests"
       }
     ]
+  },
+  {
+    "name": "explicit cache storage",
+    "expression": "len <= 200000 ? tier(\"standard\", p * 1.25 + c * 10 + cr * 0.125 + cs * 4.5) : tier(\"long_context\", p * 2.5 + c * 15 + cr * 0.25 + cs * 4.5)",
+    "tokens": {
+      "p": 100000,
+      "c": 0,
+      "len": 100000,
+      "cr": 0,
+      "cs": 250000
+    },
+    "cost": 1250000,
+    "tier": "standard"
   }
 ]

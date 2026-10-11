@@ -49,6 +49,13 @@ import {
 import { TierPriceFields } from './tier-price-fields'
 import { VisualConditionTree } from './visual-condition-tree'
 
+// Storage prices are per token per hour, so the summary labels them separately.
+const STORAGE_PRICE_KEYS: ReadonlySet<string> = new Set(
+  BILLING_VARS.filter((variable) => variable.group === 'storage').map(
+    (variable) => variable.key
+  )
+)
+
 type PricingNodeProps = {
   node: VisualPricingNode
   source: string
@@ -257,21 +264,42 @@ function PricingRuleCard(
                   </span>
                 ) : (
                   <>
-                    {tier.prices.map((price) => (
-                      <span key={price.variable}>
-                        {t(
-                          BILLING_VARS.find(
-                            (variable) => variable.key === price.variable
-                          )?.shortLabel ?? price.variable
-                        )}
-                        :{' '}
-                        {formatPricingAmount(price.value, props.currency) ||
-                          '—'}
-                      </span>
-                    ))}
+                    {tier.prices
+                      .filter(
+                        (price) => !STORAGE_PRICE_KEYS.has(price.variable)
+                      )
+                      .map((price) => (
+                        <span key={price.variable}>
+                          {t(
+                            BILLING_VARS.find(
+                              (variable) => variable.key === price.variable
+                            )?.shortLabel ?? price.variable
+                          )}
+                          :{' '}
+                          {formatPricingAmount(price.value, props.currency) ||
+                            '—'}
+                        </span>
+                      ))}
                     <span className='text-muted-foreground'>
                       /{t('1M token')}
                     </span>
+                    {tier.prices
+                      .filter((price) => STORAGE_PRICE_KEYS.has(price.variable))
+                      .map((price) => (
+                        <span key={price.variable}>
+                          {t(
+                            BILLING_VARS.find(
+                              (variable) => variable.key === price.variable
+                            )?.shortLabel ?? price.variable
+                          )}
+                          :{' '}
+                          {formatPricingAmount(price.value, props.currency) ||
+                            '—'}
+                          <span className='text-muted-foreground'>
+                            /{t('{{unit}} tokens / hour', { unit: '1M' })}
+                          </span>
+                        </span>
+                      ))}
                   </>
                 )}
               </span>

@@ -183,6 +183,21 @@ func SetRelayRouter(router *gin.Engine) {
 	registerMjRouterGroup(relayMjModeRouter)
 	//relayMjRouter.Use()
 
+	// Explicit context caches are managed by the gateway; creation selects its
+	// own channel, so these routes skip Distribute.
+	geminiCachedContentsRouter := router.Group("/v1beta/cachedContents")
+	geminiCachedContentsRouter.Use(middleware.RouteTag("relay"))
+	geminiCachedContentsRouter.Use(middleware.SystemPerformanceCheck())
+	geminiCachedContentsRouter.Use(middleware.TokenAuth())
+	geminiCachedContentsRouter.Use(middleware.ModelRequestRateLimit())
+	{
+		geminiCachedContentsRouter.POST("", controller.CreateGeminiCachedContent)
+		geminiCachedContentsRouter.GET("", controller.ListGeminiCachedContents)
+		geminiCachedContentsRouter.GET("/:id", controller.GetGeminiCachedContent)
+		geminiCachedContentsRouter.PATCH("/:id", controller.UpdateGeminiCachedContent)
+		geminiCachedContentsRouter.DELETE("/:id", controller.DeleteGeminiCachedContent)
+	}
+
 	relayGeminiRouter := router.Group("/v1beta")
 	// :countTokens is not implemented. Answer it like an unregistered route
 	// before auth/channel selection instead of silently relaying it as

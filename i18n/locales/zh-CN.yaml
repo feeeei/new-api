@@ -39,6 +39,15 @@ relay.group_upstream_saturated: "当前分组上游负载已饱和，请稍后�
 relay.retry_get_channel_failed: "获取分组 {{.Group}} 下模型 {{.Model}} 的可用渠道失败（retry）: {{.Error}}"
 relay.retry_no_available_channel: "分组 {{.Group}} 下模型 {{.Model}} 的可用渠道不存在（retry）"
 relay.access_token_unsupported: "暂不支持使用 access token"
+gemini_cache.no_available_channel: "分组 {{.Group}} 下没有支持显式上下文缓存的可用渠道（模型 {{.Model}}）"
+gemini_cache.storage_not_priced: "模型 {{.Model}} 暂不支持显式上下文缓存：未配置缓存存储价格"
+gemini_cache.channel_unavailable: "持有该缓存的渠道暂时不可用"
+gemini_cache.upstream_rejected: "上游渠道拒绝了缓存请求"
+gemini_cache.upstream_invalid_response: "上游返回的缓存响应无效"
+gemini_cache.upstream_failed: "上游缓存请求失败"
+gemini_cache.persist_failed: "保存缓存记录失败"
+gemini_cache.lookup_failed: "读取缓存记录失败"
+gemini_cache.id_allocation_failed: "分配缓存 ID 失败"
 
 # Emails and the name of the token created at registration
 user.default_token_name: "{{.Username}}的初始令牌"

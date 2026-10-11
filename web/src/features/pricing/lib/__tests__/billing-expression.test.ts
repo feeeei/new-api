@@ -25,6 +25,7 @@ import zh from '@/i18n/locales/zh.json'
 import contract from '../../../../../../pkg/billingexpr/testdata/frontend_simulation.json'
 import {
   combineBillingExpr,
+  parseTiersFromExpr,
   splitBillingExprAndRequestRules,
 } from '../billing-expr'
 import { formatBillingCondition } from '../billing-expression/condition-display'
@@ -44,6 +45,8 @@ import {
 import {
   buildEstimatorTokens,
   evalExprLocally,
+  generateExprFromVisualConfig,
+  tryParseVisualConfig,
   type ExtraTokenValues,
 } from '../tier-expr'
 
@@ -56,7 +59,101 @@ const extras: ExtraTokenValues = {
   imageCacheTokens: 0,
   audioInputTokens: 0,
   audioOutputTokens: 0,
+  cacheStorageTokens: 0,
 }
+
+const storageExpression =
+  'tier("standard", p * 1.25 + c * 10 + cr * 0.125 + cs * 4.5)'
+
+describe('explicit cache storage variable', () => {
+  test('prices token-hours per 1M tokens per hour on top of the cached input', () => {
+    // A 100,000-token cache kept for 24 hours stores 2,400,000 token-hours:
+    // $0.125 of cached input plus $10.80 of storage.
+    expect(
+      evaluateBillingExpression(storageExpression, {
+        tokens: { p: 100000, c: 0, cr: 0, cs: 2400000, len: 100000 },
+      })
+    ).toMatchObject({
+      status: 'success',
+      cost: 10_925_000,
+      matchedTier: 'standard',
+    })
+    expect(
+      evalExprLocally(storageExpression, 100000, 0, {
+        ...extras,
+        cacheReadTokens: 0,
+        cacheStorageTokens: 2400000,
+      })
+    ).toMatchObject({ cost: 10_925_000, error: null })
+  })
+
+  test('keeps storage out of the input length and ordinary request costs', () => {
+    const storage = { ...extras, cacheStorageTokens: 2400000 }
+    expect(buildEstimatorTokens(1000, 10, storage)).toMatchObject({
+      len: 1100,
+      cs: 2400000,
+    })
+    expect(
+      evalExprLocally('tier("base", p * 2 + c * 8)', 1000, 10, storage)
+    ).toMatchObject({ cost: 2080, matchedTier: 'base', error: null })
+    // An ordinary request stores nothing, so only input, output and cache read apply.
+    expect(evalExprLocally(storageExpression, 1000, 10, extras)).toMatchObject({
+      cost: 1362.5,
+      error: null,
+    })
+  })
+
+  test('reports an unknown storage quantity instead of pricing it as zero', () => {
+    const result = evaluateBillingExpression(storageExpression, {
+      tokens: { p: 100, c: 0, cr: 0, len: 100 },
+    })
+    expect(result).toMatchObject({
+      status: 'missing_context',
+      diagnostic: { detail: 'cs' },
+    })
+    expect(result).not.toHaveProperty('cost')
+  })
+
+  test('round-trips a storage price through every editor and display parser', () => {
+    const compiled = compileBillingExpression(storageExpression)
+    assert(compiled.status === 'ready')
+    expect([...compiled.variables]).toContain('cs')
+    expect(readTokenTierChain(compiled.ast)?.[0].prices).toEqual({
+      p: 1.25,
+      c: 10,
+      cr: 0.125,
+      cs: 4.5,
+    })
+    expect(parseTiersFromExpr(storageExpression)[0]).toMatchObject({
+      inputPrice: 1.25,
+      cacheReadPrice: 0.125,
+      cacheStoragePrice: 4.5,
+    })
+    const document = parseVisualBillingDocument(storageExpression)
+    assert(document)
+    expect(serializeVisualBillingDocument(document)).toEqual({
+      ok: true,
+      source: storageExpression,
+    })
+    const config = tryParseVisualConfig(storageExpression)
+    expect(config?.tiers[0]).toMatchObject({ cache_storage_unit_cost: 4.5 })
+    expect(generateExprFromVisualConfig(config)).toBe(storageExpression)
+  })
+
+  test.each([
+    'tier("base", p * 2 + c * 8)',
+    'tier("base", p * 5 + c * 25 + cr * 0.5 + cc * 6.25 + cc1h * 10)',
+    'tier("base", p * 0.43 + c * 3.06 + img * 0.78 + ai * 3.81 + ao * 15.11)',
+    'len <= 272000 ? tier("standard", p * 2.5 + c * 15 + cr * 0.25) : tier("long_context", p * 5 + c * 22.5 + cr * 0.5)',
+  ])(
+    'regenerates the legacy visual config of %s without a storage term',
+    (source) => {
+      expect(generateExprFromVisualConfig(tryParseVisualConfig(source))).toBe(
+        source
+      )
+    }
+  )
+})
 
 test('evaluates and round-trips separate image cache prices including an explicit zero', () => {
   const source =

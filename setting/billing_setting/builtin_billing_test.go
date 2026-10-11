@@ -148,3 +148,69 @@ func TestImageModelBuiltinPricesAndOverrides(t *testing.T) {
 		})
 	}
 }
+
+func TestGeminiBuiltinBillingPricesExplicitCacheStorage(t *testing.T) {
+	settings := config.GlobalConfig.Get("billing_setting").(*billing_setting.BillingSetting)
+	saved := *settings
+	savedRatios, savedPrices := ratio_setting.ModelRatio2JSONString(), ratio_setting.ModelPrice2JSONString()
+	t.Cleanup(func() {
+		*settings = saved
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(savedRatios))
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(savedPrices))
+	})
+	*settings = billing_setting.BillingSetting{BillingMode: map[string]string{}, BillingExpr: map[string]string{}}
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{}`))
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{}`))
+
+	for _, name := range []string{
+		"gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite",
+		"gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools", "gemini-3-flash-preview",
+		"gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite",
+	} {
+		assert.Equal(t, billing_setting.BillingModeTieredExpr, billing_setting.GetBillingMode(name), name)
+		expression, ok := billing_setting.GetBillingExpr(name)
+		require.True(t, ok, name)
+		require.NoError(t, billing_setting.SmokeTestExpr(expression), name)
+		assert.True(t, billingexpr.UsedVars(expression)["cs"], "%s prices explicit cache storage", name)
+	}
+
+	quota := func(t *testing.T, name string, params billingexpr.TokenParams) int {
+		expression, ok := billing_setting.GetBillingExpr(name)
+		require.True(t, ok)
+		result, err := billingexpr.ComputeTieredQuotaWithRequest(&billingexpr.BillingSnapshot{
+			ExprString: expression, ExprHash: billingexpr.ExprHashString(expression), GroupRatio: 1, QuotaPerUnit: 500000,
+		}, params, billingexpr.RequestInput{})
+		require.NoError(t, err)
+		return result.ActualQuotaAfterGroup
+	}
+	usageParams := func(name string, usage *dto.Usage) billingexpr.TokenParams {
+		expression, _ := billing_setting.GetBillingExpr(name)
+		return service.BuildTieredTokenParams(usage, false, billingexpr.UsedVars(expression))
+	}
+
+	// 100k text + 100k cached at the 200k boundary: $0.125 + $0.0125 + 1k output $0.01.
+	assert.Equal(t, 73750, quota(t, "gemini-2.5-pro", usageParams("gemini-2.5-pro", &dto.Usage{
+		PromptTokens: 200000, CompletionTokens: 1000, PromptTokensDetails: dto.InputTokenDetails{CachedTokens: 100000},
+	})))
+	// One token above the boundary moves input, output and cache reads to the long-context rates.
+	assert.Equal(t, 145001, quota(t, "gemini-2.5-pro", usageParams("gemini-2.5-pro", &dto.Usage{
+		PromptTokens: 200001, CompletionTokens: 1000, PromptTokensDetails: dto.InputTokenDetails{CachedTokens: 100000},
+	})))
+	// Audio input has its own price on 2.5 Flash.
+	assert.Equal(t, 415, quota(t, "gemini-2.5-flash", usageParams("gemini-2.5-flash", &dto.Usage{
+		PromptTokens: 1000, CompletionTokens: 100, PromptTokensDetails: dto.InputTokenDetails{AudioTokens: 400},
+	})))
+	// 19.2k cached audio + 100 text tokens bill the cached audio once, as a cache read:
+	// text $0.00003 + cache $0.000576 + 1k output $0.0025.
+	cachedAudio, ok := dto.NewGeminiChatBillingUsage(&dto.GeminiUsageMetadata{
+		PromptTokenCount: 19300, CandidatesTokenCount: 1000, TotalTokenCount: 20300, CachedContentTokenCount: 19200,
+		PromptTokensDetails: []dto.GeminiPromptTokensDetails{{Modality: "TEXT", TokenCount: 100}, {Modality: "AUDIO", TokenCount: 19200}},
+		CacheTokensDetails:  []dto.GeminiPromptTokensDetails{{Modality: "AUDIO", TokenCount: 19200}},
+	}).CanonicalUsage()
+	require.True(t, ok)
+	assert.Equal(t, 1553, quota(t, "gemini-2.5-flash", usageParams("gemini-2.5-flash", cachedAudio)))
+	// Creating a 100k-token cache for two hours: input $0.075 + storage 200k token-hours × $0.50/1M.
+	assert.Equal(t, 87500, quota(t, "gemini-3.8-flash", billingexpr.TokenParams{P: 100000, Len: 100000, CS: 200000}))
+	// Extending a 300k-token cache by 30 minutes on 3.1 Pro charges storage only.
+	assert.Equal(t, 337500, quota(t, "gemini-3.1-pro-preview", billingexpr.TokenParams{Len: 300000, CS: 150000}))
+}

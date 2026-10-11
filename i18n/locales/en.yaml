@@ -38,6 +38,15 @@ relay.group_upstream_saturated: "The upstream of the current group is at capacit
 relay.retry_get_channel_failed: "Failed to get available channel for model {{.Model}} under group {{.Group}} (retry): {{.Error}}"
 relay.retry_no_available_channel: "No available channel for model {{.Model}} under group {{.Group}} (retry)"
 relay.access_token_unsupported: "Access tokens are not supported here"
+gemini_cache.no_available_channel: "No available channel supports explicit context caching for model {{.Model}} under group {{.Group}}"
+gemini_cache.storage_not_priced: "Explicit context caching is not available for model {{.Model}}: storage pricing is not configured"
+gemini_cache.channel_unavailable: "The channel holding this cached content is temporarily unavailable"
+gemini_cache.upstream_rejected: "The upstream channel rejected the cached content request"
+gemini_cache.upstream_invalid_response: "Upstream returned an invalid cached content response"
+gemini_cache.upstream_failed: "Upstream cached content request failed"
+gemini_cache.persist_failed: "Failed to save the cached content"
+gemini_cache.lookup_failed: "Failed to load the cached content"
+gemini_cache.id_allocation_failed: "Failed to allocate a cached content id"
 
 # Emails and the name of the token created at registration
 user.default_token_name: "{{.Username}}'s initial token"

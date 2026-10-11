@@ -46,6 +46,10 @@ import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
 import {
+  positiveIntegerSchema,
+  safeNumberFieldProps,
+} from '../utils/numeric-field'
+import {
   formatJsonForTextarea,
   normalizeJsonString,
   validateJsonString,
@@ -92,6 +96,9 @@ const schema = z.object({
       .max(1, { message: 'Must be 1 or less' }),
     function_call_thought_signature_enabled: z.boolean(),
     remove_function_response_id_enabled: z.boolean(),
+    explicit_cache_max_ttl_seconds: positiveIntegerSchema(
+      'Enter a positive integer'
+    ),
   }),
 })
 
@@ -106,6 +113,7 @@ type FlatGeminiSettings = {
   'gemini.thinking_adapter_budget_tokens_percentage': number
   'gemini.function_call_thought_signature_enabled': boolean
   'gemini.remove_function_response_id_enabled': boolean
+  'gemini.explicit_cache_max_ttl_seconds': number
 }
 
 type GeminiSettingsCardProps = {
@@ -134,6 +142,8 @@ export function GeminiSettingsCard({ defaultValues }: GeminiSettingsCardProps) {
       defaultValues.gemini.function_call_thought_signature_enabled ?? true,
     'gemini.remove_function_response_id_enabled':
       defaultValues.gemini.remove_function_response_id_enabled ?? true,
+    'gemini.explicit_cache_max_ttl_seconds':
+      defaultValues.gemini.explicit_cache_max_ttl_seconds,
   })
 
   const buildFormDefaults = (
@@ -152,6 +162,8 @@ export function GeminiSettingsCard({ defaultValues }: GeminiSettingsCardProps) {
         values.gemini.function_call_thought_signature_enabled ?? true,
       remove_function_response_id_enabled:
         values.gemini.remove_function_response_id_enabled ?? true,
+      explicit_cache_max_ttl_seconds:
+        values.gemini.explicit_cache_max_ttl_seconds,
     },
   })
 
@@ -184,6 +196,8 @@ export function GeminiSettingsCard({ defaultValues }: GeminiSettingsCardProps) {
         defaultValues.gemini.function_call_thought_signature_enabled ?? true,
       'gemini.remove_function_response_id_enabled':
         defaultValues.gemini.remove_function_response_id_enabled ?? true,
+      'gemini.explicit_cache_max_ttl_seconds':
+        defaultValues.gemini.explicit_cache_max_ttl_seconds,
     }
 
     form.reset(buildFormDefaults(defaultValues))
@@ -209,6 +223,8 @@ export function GeminiSettingsCard({ defaultValues }: GeminiSettingsCardProps) {
         values.gemini.function_call_thought_signature_enabled,
       'gemini.remove_function_response_id_enabled':
         values.gemini.remove_function_response_id_enabled,
+      'gemini.explicit_cache_max_ttl_seconds':
+        values.gemini.explicit_cache_max_ttl_seconds,
     }
 
     const updates = (
@@ -430,6 +446,32 @@ export function GeminiSettingsCard({ defaultValues }: GeminiSettingsCardProps) {
                   />
                 </FormControl>
               </SettingsSwitchItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name='gemini.explicit_cache_max_ttl_seconds'
+            render={({ field, fieldState }) => (
+              <FormItem>
+                <FormLabel>{t('Explicit cache max TTL (seconds)')}</FormLabel>
+                <FormControl>
+                  <Input
+                    {...safeNumberFieldProps(field)}
+                    type='number'
+                    min={1}
+                    step={1}
+                    className='w-40'
+                    aria-invalid={fieldState.invalid}
+                  />
+                </FormControl>
+                <FormDescription>
+                  {t(
+                    'Longest TTL a client can create or extend an explicit context cache to (/v1beta/cachedContents). Defaults to 86400 (24 hours).'
+                  )}
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
             )}
           />
         </SettingsForm>

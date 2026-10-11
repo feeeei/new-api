@@ -99,6 +99,36 @@ func TestCanonicalGeminiUsageClampsNegativeCompletionFromTotalMinusPrompt(t *tes
 	assert.Equal(t, 0, usage.CompletionTokens)
 }
 
+func TestCanonicalGeminiUsageMapsCacheTokensDetails(t *testing.T) {
+	var response GeminiChatResponse
+	require.NoError(t, kitutil.Unmarshal([]byte(`{"usageMetadata":{"promptTokenCount":19350,"candidatesTokenCount":1000,"totalTokenCount":20350,"cachedContentTokenCount":19250,`+
+		`"promptTokensDetails":[{"modality":"TEXT","tokenCount":100},{"modality":"AUDIO","tokenCount":19200},{"modality":"VIDEO","tokenCount":50}],`+
+		`"cacheTokensDetails":[{"modality":"AUDIO","tokenCount":19200},{"modality":"text","tokenCount":0},{"modality":"VIDEO","tokenCount":50}]}}`), &response))
+	billing := NewGeminiChatBillingUsage(response.GetUsageMetadata())
+	require.NotNil(t, billing)
+	// The snapshot must not share the decoded slice.
+	response.UsageMetadata.CacheTokensDetails[0].TokenCount = 1
+
+	usage, ok := billing.CanonicalUsage()
+	require.True(t, ok)
+	assert.Equal(t, 19250, usage.PromptTokensDetails.CachedTokens)
+	assert.Equal(t, 19200, usage.PromptTokensDetails.AudioTokens)
+	// VIDEO is ignored like in the prompt breakdown; IMAGE was not reported.
+	assert.Equal(t, &CachedTokenDetails{
+		AudioTokens: kitutil.GetPointer(19200),
+		TextTokens:  kitutil.GetPointer(0),
+	}, usage.PromptTokensDetails.CachedTokensDetails)
+
+	withoutBreakdown := &GeminiUsageMetadata{PromptTokenCount: 100, CachedContentTokenCount: 80}
+	usage, ok = NewGeminiChatBillingUsage(withoutBreakdown).CanonicalUsage()
+	require.True(t, ok)
+	assert.Equal(t, 80, usage.PromptTokensDetails.CachedTokens)
+	assert.Nil(t, usage.PromptTokensDetails.CachedTokensDetails)
+	encoded, err := kitutil.Marshal(withoutBreakdown)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "cacheTokensDetails")
+}
+
 func TestCanonicalOpenAIUsageMergesInputTokenDetailsFieldwise(t *testing.T) {
 	usage, ok := NewOpenAIResponsesBillingUsage(&Usage{
 		PromptTokens: 10,

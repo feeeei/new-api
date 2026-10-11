@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	relaytypes "github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
@@ -518,6 +519,60 @@ func TestBillingSessionReserveWalletTopUpDecrementsBalance(t *testing.T) {
 	assert.Equal(t, 450_000, userQuota)
 }
 
+// A charge fixed before it is incurred (explicit cache storage) must not raise
+// the reservation into wallet debt.
+func TestBillingSessionReserveRequiresAvailableQuota(t *testing.T) {
+	truncate(t)
+
+	const userID = 703
+	seedUser(t, userID, 120_000)
+
+	relayInfo := &relaycommon.RelayInfo{
+		UserId:                        userID,
+		IsPlayground:                  true,
+		ReserveRequiresAvailableQuota: true,
+	}
+	session := &BillingSession{
+		relayInfo:        relayInfo,
+		funding:          &WalletFunding{userId: userID, consumed: 50_000},
+		preConsumedQuota: 50_000,
+	}
+
+	require.NoError(t, session.Reserve(100_000))
+	userQuota, err := model.GetUserQuota(userID, false)
+	require.NoError(t, err)
+	assert.Equal(t, 70_000, userQuota)
+
+	err = session.Reserve(300_000)
+	var apiErr *relaytypes.NewAPIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, relaytypes.ErrorCodeInsufficientUserQuota, apiErr.GetErrorCode())
+	assert.Equal(t, 100_000, session.GetPreConsumedQuota())
+	userQuota, err = model.GetUserQuota(userID, false)
+	require.NoError(t, err)
+	assert.Equal(t, 70_000, userQuota)
+}
+
+// A refund returns every amount reserved from the wallet, including raises.
+func TestWalletFundingRefundReturnsRaisedReservation(t *testing.T) {
+	truncate(t)
+
+	const userID = 704
+	seedUser(t, userID, 100_000)
+
+	funding := &WalletFunding{userId: userID}
+	require.NoError(t, funding.PreConsume(30_000))
+	require.NoError(t, funding.PreConsume(20_000))
+	userQuota, err := model.GetUserQuota(userID, false)
+	require.NoError(t, err)
+	assert.Equal(t, 50_000, userQuota)
+
+	require.NoError(t, funding.Refund())
+	userQuota, err = model.GetUserQuota(userID, false)
+	require.NoError(t, err)
+	assert.Equal(t, 100_000, userQuota)
+}
+
 func TestTryTieredSettleUsesFinalGroupAfterRetry(t *testing.T) {
 	const expr = `tier("base", p)`
 	tests := []struct {
@@ -788,6 +843,36 @@ func TestImageCacheBilling(t *testing.T) {
 			result, err := billingexpr.ComputeTieredQuota(makeSnapshot(tc.expression, 1, 1000, 100), params)
 			require.NoError(t, err)
 			assert.Equal(t, tc.quota, result.ActualQuotaAfterGroup)
+		})
+	}
+}
+
+func TestGeminiCachedAudioBilling(t *testing.T) {
+	const expression = `tier("standard", p * 0.3 + ai * 1 + c * 2.5 + cr * 0.03)`
+	for _, tc := range []struct {
+		name          string
+		semantic      string
+		expression    string
+		audio, cached int
+		details       *dto.CachedTokenDetails
+		p, ai, cr     float64
+	}{
+		{"cached audio is a cache read", dto.BillingUsageSemanticGemini, expression, 600, 500, &dto.CachedTokenDetails{AudioTokens: common.GetPointer(400), TextTokens: common.GetPointer(100)}, 300, 200, 500},
+		{"missing breakdown", dto.BillingUsageSemanticGemini, expression, 600, 500, nil, 0, 600, 500},
+		{"negative cached audio", dto.BillingUsageSemanticGemini, expression, 600, 500, &dto.CachedTokenDetails{AudioTokens: common.GetPointer(-1)}, 0, 600, 500},
+		{"cached audio exceeds audio input", dto.BillingUsageSemanticGemini, expression, 300, 500, &dto.CachedTokenDetails{AudioTokens: common.GetPointer(301)}, 200, 300, 500},
+		{"cached audio exceeds cache", dto.BillingUsageSemanticGemini, expression, 600, 500, &dto.CachedTokenDetails{AudioTokens: common.GetPointer(501)}, 0, 600, 500},
+		{"openai semantics unchanged", dto.BillingUsageSemanticOpenAI, expression, 600, 500, &dto.CachedTokenDetails{AudioTokens: common.GetPointer(400)}, 0, 600, 500},
+		{"cache reads not priced", dto.BillingUsageSemanticGemini, `tier("standard", p * 0.3 + ai * 1 + c * 2.5)`, 600, 500, &dto.CachedTokenDetails{AudioTokens: common.GetPointer(400)}, 400, 600, 500},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			usage := &dto.Usage{PromptTokens: 1000, CompletionTokens: 100, UsageSemantic: tc.semantic,
+				PromptTokensDetails: dto.InputTokenDetails{CachedTokens: tc.cached, AudioTokens: tc.audio, CachedTokensDetails: tc.details}}
+			params := BuildTieredTokenParams(usage, false, billingexpr.UsedVars(tc.expression))
+			assert.Equal(t, tc.p, params.P)
+			assert.Equal(t, tc.ai, params.AI)
+			assert.Equal(t, tc.cr, params.CR)
+			assert.Equal(t, float64(1000), params.Len)
 		})
 	}
 }

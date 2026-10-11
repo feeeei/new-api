@@ -219,6 +219,53 @@ test('top-up content_parts render in the viewer language', async () => {
   )
 })
 
+test.each<{ name: string; other: LogOtherData; expected: string }>([
+  {
+    name: 'explicit cache creation',
+    other: {
+      billing_tokens: { p: 12000, c: 0, cs: 12000 },
+      explicit_cache: {
+        action: 'create',
+        name: 'cachedContents/abc123',
+        tokens: 12000,
+        seconds: 3600,
+        storage_token_hours: 12000,
+      },
+    },
+    // Base prices and the storage price follow the leading action.
+    expected: 'Explicit cache · Create+2',
+  },
+  {
+    name: 'explicit cache extension',
+    other: {
+      billing_tokens: { p: 0, c: 0, cs: 6000 },
+      explicit_cache: {
+        action: 'extend',
+        name: 'cachedContents/abc123',
+        tokens: 12000,
+        seconds: 1800,
+        storage_token_hours: 6000,
+      },
+    },
+    expected: 'Explicit cache · Extend+2',
+  },
+  {
+    name: 'ordinary request without storage',
+    other: { billing_tokens: { p: 1000, c: 10 } },
+    expected: 'standard · $1.25 / $10/M',
+  },
+])('$name on a storage-priced model summarizes as $expected', (row) => {
+  const preview = renderPreview({
+    billing_mode: 'tiered_expr',
+    expr_b64: btoa(
+      'tier("standard", p * 1.25 + c * 10 + cr * 0.125 + cs * 4.5)'
+    ),
+    matched_tier: 'standard',
+    ...row.other,
+  })
+  expect(preview.textContent).toBe(row.expected)
+})
+
 test('quota saturation remains first and only billing adds to the counter', () => {
   const preview = renderPreview({
     model_price: 0.25,

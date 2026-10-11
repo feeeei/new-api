@@ -212,6 +212,9 @@ func smokeTestExpr(exprStr string) error {
 		{P: 300, C: 100, Len: 1000, CR: 100, Img: 400, ImgCR: 200},
 		{P: 800, C: 50, Len: 1000, AI: 200, AO: 50},
 		{Len: math.MaxInt32, ImgCR: math.MaxInt32},
+		// Explicit cache create (input + one day of storage) and a storage-only extension.
+		{P: 100000, Len: 100000, CS: 100000 * 24},
+		{Len: math.MaxInt32, CS: math.MaxInt32 * 24.0},
 	}
 
 	for _, v := range vectors {

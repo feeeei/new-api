@@ -804,7 +804,9 @@ function PriceSection(props: {
                 const unitLabel = taskUsageUnitLabel(
                   entry,
                   i18n.language,
-                  unitLabelKey ? t(unitLabelKey) : tokenUnitLabel
+                  unitLabelKey
+                    ? t(unitLabelKey, { unit: tokenUnitLabel })
+                    : tokenUnitLabel
                 )
                 return (
                   <div
@@ -1252,7 +1254,9 @@ function ProviderGroupPricingSection(
                       let unitLabel = taskUsageUnitLabel(
                         fieldEntry,
                         i18n.language,
-                        unitLabelKey ? t(unitLabelKey) : ''
+                        unitLabelKey
+                          ? t(unitLabelKey, { unit: tokenUnitLabel })
+                          : ''
                       )
                       if (!unitLabel && hasRequestPrice) {
                         unitLabel = t('{{unit}} tokens', {

@@ -82,6 +82,12 @@ type DynamicPricingBreakdownProps = {
    */
   hideCacheColumns?: boolean
   /**
+   * Hide explicit cache storage price columns. The log details dialog passes
+   * this for entries that did not charge storage, since ordinary requests
+   * never do. Defaults to false (show all configured prices).
+   */
+  hideStorageColumns?: boolean
+  /**
    * Dense rendering for the usage-log details dialog: drops the colored
    * icon header and uses the dialog's small text sizes. Defaults to false.
    */
@@ -105,7 +111,7 @@ type BreakdownPriceField = {
   id: string
   label: string
   labelKind: DynamicPriceLabelKind
-  unit: BillingUsageUnit | 'request' | 'token' | 'image'
+  unit: BillingUsageUnit | 'request' | 'token' | 'token_hour' | 'image'
   unitLabel?: string | Record<string, string>
   showTokenUnit?: boolean
   value: (tier: BreakdownTier) => number
@@ -113,10 +119,14 @@ type BreakdownPriceField = {
 
 function breakdownPriceFieldLabel(
   field: BreakdownPriceField,
-  t: (key: string) => string
+  t: (key: string, options?: Record<string, unknown>) => string
 ): ReactNode {
   if (field.labelKind === 'schema') {
     return <span className='break-words whitespace-normal'>{field.label}</span>
+  }
+  // Storage prices differ from the table's per-token prices, so always label them.
+  if (field.unit === 'token_hour') {
+    return `${t(field.label)} / ${t('{{unit}} tokens / hour', { unit: '1M' })}`
   }
   return field.showTokenUnit
     ? `${t(field.label)} / ${t('1M token')}`
@@ -286,6 +296,7 @@ export function DynamicPricingBreakdown({
   matchedFixedPrice,
   requestRules,
   hideCacheColumns = false,
+  hideStorageColumns = false,
   compact = false,
   usageSchema,
   taskPriceOptions,
@@ -409,6 +420,7 @@ export function DynamicPricingBreakdown({
     const fields: BreakdownPriceField[] = BILLING_PRICING_VARS.filter(
       (variable) => {
         if (hideCacheColumns && variable.group === 'cache') return false
+        if (hideStorageColumns && variable.group === 'storage') return false
         return tiers.some(
           (tier) =>
             !isTaskBreakdownTier(tier) &&
@@ -419,7 +431,7 @@ export function DynamicPricingBreakdown({
       id: variable.field ?? `price-${index}`,
       label: variable.shortLabel,
       labelKind: 'i18n' as const,
-      unit: 'token',
+      unit: variable.group === 'storage' ? 'token_hour' : 'token',
       value: (tier: BreakdownTier) =>
         isTaskBreakdownTier(tier)
           ? 0

@@ -1,6 +1,9 @@
 package dto
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 const (
 	BillingUsageSourceClaudeMessages = "claude_messages"
@@ -348,6 +351,30 @@ func (usage *BillingUsage) canonicalGeminiUsage() *Usage {
 	for _, detail := range metadata.ToolUsePromptTokensDetails {
 		addGeminiInputTokenDetail(&canonical.PromptTokensDetails, detail)
 	}
+	// cacheTokensDetails breaks down the cached part of the prompt, which the
+	// counts above already include. Only reported modalities get a value, so
+	// a missing one stays distinct from zero.
+	var cached CachedTokenDetails
+	for _, detail := range metadata.CacheTokensDetails {
+		var count **int
+		switch normalizeGeminiModality(detail.Modality) {
+		case "AUDIO":
+			count = &cached.AudioTokens
+		case "IMAGE":
+			count = &cached.ImageTokens
+		case "TEXT":
+			count = &cached.TextTokens
+		default:
+			continue
+		}
+		if *count == nil {
+			*count = new(int)
+		}
+		**count += detail.TokenCount
+	}
+	if cached != (CachedTokenDetails{}) {
+		canonical.PromptTokensDetails.CachedTokensDetails = &cached
+	}
 	for _, detail := range metadata.CandidatesTokensDetails {
 		switch normalizeGeminiModality(detail.Modality) {
 		case "IMAGE":
@@ -414,6 +441,7 @@ func cloneClaudeUsage(usage *ClaudeUsage) *ClaudeUsage {
 
 func cloneGeminiUsageMetadata(metadata GeminiUsageMetadata) GeminiUsageMetadata {
 	metadata.PromptTokensDetails = append([]GeminiPromptTokensDetails{}, metadata.PromptTokensDetails...)
+	metadata.CacheTokensDetails = slices.Clone(metadata.CacheTokensDetails)
 	metadata.ToolUsePromptTokensDetails = append([]GeminiPromptTokensDetails{}, metadata.ToolUsePromptTokensDetails...)
 	metadata.CandidatesTokensDetails = append([]GeminiPromptTokensDetails{}, metadata.CandidatesTokensDetails...)
 	metadata.BillingUsage = nil

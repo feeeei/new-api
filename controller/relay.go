@@ -91,6 +91,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if newAPIError != nil {
 			service.RecordRequestPolicyTermination(c, newAPIError)
 			logger.LogError(c, common.LogText("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
+			// Google error bodies that clients match on (a missing explicit
+			// cache, a gateway's answer) are returned as they are.
+			if rawError, ok := service.GetGeminiRawError(c); ok && relayFormat == types.RelayFormatGemini {
+				c.Data(rawError.StatusCode, "application/json", rawError.Body)
+				return
+			}
 			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
 			switch relayFormat {
 			case types.RelayFormatOpenAIRealtime:

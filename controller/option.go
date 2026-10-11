@@ -276,6 +276,12 @@ func UpdateOption(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		}
+	case "gemini.explicit_cache_max_ttl_seconds":
+		err = model_setting.ValidateGeminiExplicitCacheMaxTTLSeconds(option.Value.(string))
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
 	case "claude.default_max_tokens":
 		err = model_setting.ValidateClaudeDefaultMaxTokens(option.Value.(string))
 		if err != nil {

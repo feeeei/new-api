@@ -50,6 +50,9 @@ const PRICE_VARS = BILLING_EXTRA_VARS.map((variable) => ({
 const CACHE_PRICE_VARS = PRICE_VARS.filter(
   (variable) => variable.group === 'cache' && variable.key !== 'img_cr'
 )
+const STORAGE_PRICE_VARS = PRICE_VARS.filter(
+  (variable) => variable.group === 'storage'
+)
 const MEDIA_PRICE_ORDER = ['img', 'img_cr', 'img_o', 'ai', 'ao']
 const MEDIA_PRICE_VARS = PRICE_VARS.filter(
   (variable) => variable.group === 'media' || variable.key === 'img_cr'
@@ -136,6 +139,7 @@ export function TierPriceFields(props: TierPriceFieldsProps) {
   const renderPriceVariable = (variable: {
     key: VisualPrice['variable']
     label: string
+    group?: string
   }) => (
     <PriceField
       key={variable.key}
@@ -144,6 +148,11 @@ export function TierPriceFields(props: TierPriceFieldsProps) {
         variable.key === 'cc' && props.prices.cc1h !== undefined
           ? t('Cache Creation (5m)')
           : t(variable.label)
+      }
+      hint={
+        variable.group === 'storage'
+          ? `${props.currency.symbol}/${t('{{unit}} tokens / hour', { unit: '1M' })}`
+          : undefined
       }
       value={props.prices[variable.key] ?? 0}
       onChange={(value) => props.onChange(variable.key, value)}
@@ -256,6 +265,7 @@ export function TierPriceFields(props: TierPriceFieldsProps) {
                 }
                 return renderPriceVariable(variable)
               })}
+              {STORAGE_PRICE_VARS.map(renderPriceVariable)}
             </div>
           </div>
         </div>

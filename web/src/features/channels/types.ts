@@ -114,6 +114,10 @@ export interface ChannelOtherSettings {
   upstream_model_update_last_check_time?: number
   upstream_model_update_last_detected_models?: string[]
   advanced_custom?: AdvancedCustomConfig
+  // Gemini: the custom base URL is another gateway serving /v1beta/cachedContents.
+  gemini_explicit_cache_upstream?: boolean
+  // Gemini: TTL cap in seconds for caches created through that gateway; 0 means none.
+  gemini_explicit_cache_upstream_max_ttl_seconds?: number
 }
 
 export interface AdvancedCustomConfig {

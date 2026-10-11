@@ -130,6 +130,14 @@ type ChannelOtherSettings struct {
 	// rejection. Empty follows the default allow policy. Accepted values:
 	// "", "allow", "safe", "strict".
 	ToolLossPolicy string `json:"tool_loss_policy,omitempty"`
+	// GeminiExplicitCacheUpstream declares that a Gemini channel's custom base
+	// URL is another gateway implementing /v1beta/cachedContents, so explicit
+	// context caches may be created through it. The official base URL needs
+	// no declaration.
+	GeminiExplicitCacheUpstream bool `json:"gemini_explicit_cache_upstream,omitempty"`
+	// GeminiExplicitCacheUpstreamMaxTTLSeconds is that gateway's TTL limit;
+	// zero means the channel adds no limit of its own.
+	GeminiExplicitCacheUpstreamMaxTTLSeconds int `json:"gemini_explicit_cache_upstream_max_ttl_seconds,omitempty"`
 }
 
 func (s *ChannelOtherSettings) IsOpenRouterEnterprise() bool {

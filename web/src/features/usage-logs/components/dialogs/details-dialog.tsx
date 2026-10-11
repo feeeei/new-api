@@ -44,6 +44,7 @@ import {
   Headphones,
   Monitor,
   Cloud,
+  Database,
   Globe,
   ShieldCheck,
   UserCog,
@@ -62,8 +63,14 @@ import { BILLING_PRICING_VARS } from '@/features/pricing/lib/billing-expr'
 import { pluginUsageSchema } from '@/features/pricing/lib/plugin-pricing'
 import { PolicyDecisionRecord } from '@/features/system-settings/request-policies/decision-record'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
+import { toIntlLocale } from '@/i18n/languages'
 import { formatBillingCurrencyFromUSD } from '@/lib/currency'
-import { formatLogQuota, formatTokens, formatUseTime } from '@/lib/format'
+import {
+  formatLogQuota,
+  formatNumber,
+  formatTokens,
+  formatUseTime,
+} from '@/lib/format'
 import { translateServerText } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
@@ -75,7 +82,10 @@ import {
   parseAuditLine,
   decodeBillingExprB64,
   getTieredBillingSummary,
+  explicitCacheActionLabel,
+  formatStorageDuration,
   hasAnyCacheTokens,
+  hasExplicitCacheStorage,
   isViolationFeeLog,
   getFirstResponseTimeColor,
   getResponseTimeColor,
@@ -90,7 +100,11 @@ import {
   isPerCallBilling,
   isTimingLogType,
 } from '../../lib/utils'
-import { USAGE_BILLING_PATH, type LogOtherData } from '../../types'
+import {
+  USAGE_BILLING_PATH,
+  type ExplicitCacheCharge,
+  type LogOtherData,
+} from '../../types'
 import { ResponseModelDetails } from '../model-badge'
 import { PluginAuthorLink } from '../plugin-author-link'
 import { DetailRow, DetailSection } from './log-detail-layout'
@@ -195,9 +209,15 @@ function BillingBreakdown(props: {
         })
       }
       for (const entry of tieredSummary.priceEntries) {
+        let unit = 'M'
+        if (entry.unit === 'token_hour') {
+          unit = t('{{unit}} tokens / hour', { unit: '1M' })
+        } else if (entry.unit) {
+          unit = t(entry.unit)
+        }
         rows.push({
           label: t(entry.shortLabel),
-          value: `${fmtPrice(entry.price)}/${entry.unit ? t(entry.unit) : 'M'}`,
+          value: `${fmtPrice(entry.price)}/${unit}`,
         })
       }
     } else {
@@ -373,8 +393,67 @@ function BillingBreakdown(props: {
   )
 }
 
+function ExplicitCacheDetails(props: { cache: ExplicitCacheCharge }) {
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const cache = props.cache
+
+  return (
+    <DetailSection
+      icon={<Database className='size-3.5' aria-hidden='true' />}
+      iconTone='info'
+      label={t('Explicit cache')}
+    >
+      <DetailRow
+        label={t('Action')}
+        value={explicitCacheActionLabel(cache.action, t)}
+      />
+      {cache.name && (
+        <DetailRow label={t('Cache name')} value={cache.name} mono />
+      )}
+      {Number.isFinite(cache.tokens) && (
+        <DetailRow
+          label={t('Cached tokens')}
+          value={formatNumber(cache.tokens, locale)}
+          mono
+        />
+      )}
+      {typeof cache.seconds === 'number' &&
+        Number.isFinite(cache.seconds) &&
+        cache.seconds >= 0 && (
+          <DetailRow
+            label={t('Storage duration')}
+            value={formatStorageDuration(cache.seconds, locale)}
+            mono
+          />
+        )}
+      {Number.isFinite(cache.storage_token_hours) && (
+        <DetailRow
+          label={t('Storage')}
+          value={`${formatNumber(cache.storage_token_hours, locale)} ${t('token·hours')}`}
+          mono
+        />
+      )}
+      {cache.storage_cancelled === true && (
+        <div className='flex items-start gap-1.5 text-xs text-amber-600 dark:text-amber-400'>
+          <AlertTriangle
+            className='mt-0.5 size-3.5 shrink-0'
+            aria-hidden='true'
+          />
+          <span>
+            {t(
+              'Explicit cache creation was cancelled because the storage charge exceeds the available quota; only the cached input tokens were charged'
+            )}
+          </span>
+        </div>
+      )}
+    </DetailSection>
+  )
+}
+
 function TokenBreakdown(props: { log: UsageLog; other: LogOtherData }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const { log, other } = props
 
   const promptTokens = log.prompt_tokens || 0
@@ -458,7 +537,11 @@ function TokenBreakdown(props: { log: UsageLog; other: LogOtherData }) {
               <DetailRow
                 key={variable.key}
                 label={t(variable.shortLabel)}
-                value={count.toLocaleString()}
+                value={
+                  variable.group === 'storage'
+                    ? `${formatNumber(count, locale)} ${t('token·hours')}`
+                    : count.toLocaleString()
+                }
                 mono
               />
             )
@@ -1165,6 +1248,11 @@ export function DetailsDialog(props: DetailsDialogProps) {
             </DetailSection>
           )}
 
+        {/* Explicit context cache create/extend charge */}
+        {isConsume && other?.explicit_cache && (
+          <ExplicitCacheDetails cache={other.explicit_cache} />
+        )}
+
         {/* Token breakdown (for consume/error types with token data) */}
         {isDisplayableType(props.log.type) && other && (
           <TokenBreakdown log={props.log} other={other} />
@@ -1196,6 +1284,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
               matchedFixedPrice={other.fixed_price}
               requestRules={other.request_rules}
               hideCacheColumns={!hasAnyCacheTokens(other)}
+              hideStorageColumns={!hasExplicitCacheStorage(other)}
               usageSchema={billingUsageSchema}
               usageFacts={other.usage_facts}
             />

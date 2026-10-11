@@ -31,6 +31,9 @@ type TokenParams struct {
 	ImgO  float64 // image output tokens
 	AI    float64 // audio input tokens
 	AO    float64 // audio output tokens
+	// CS is explicit context cache storage in token-hours. Only cache create
+	// and extend charges set it; ordinary requests leave it zero.
+	CS float64
 }
 
 // RequestRuleTrace describes one request-dependent multiplier detected at compile time.

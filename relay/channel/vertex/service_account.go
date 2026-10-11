@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 
@@ -60,6 +61,17 @@ func getAccessToken(a *Adaptor, info *relaycommon.RelayInfo) (string, error) {
 		return newToken, nil
 	}
 	return newToken, nil
+}
+
+// ServiceAccountAccessToken returns an access token for the service account
+// whose JSON credentials are info.ApiKey. Tokens are cached per channel and
+// key, shared with relay requests on the same credential.
+func ServiceAccountAccessToken(info *relaycommon.RelayInfo) (string, error) {
+	credentials := Credentials{}
+	if err := common.UnmarshalJsonStr(info.ApiKey, &credentials); err != nil {
+		return "", fmt.Errorf("failed to decode credentials file: %w", err)
+	}
+	return getAccessToken(&Adaptor{AccountCredentials: credentials}, info)
 }
 
 func createSignedJWT(email, privateKeyPEM string) (string, error) {

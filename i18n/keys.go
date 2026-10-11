@@ -47,6 +47,16 @@ const (
 	MsgRelayRetryGetChannelFailed        = "relay.retry_get_channel_failed"
 	MsgRelayRetryNoAvailableChannel      = "relay.retry_no_available_channel"
 	MsgRelayAccessTokenUnsupported       = "relay.access_token_unsupported"
+
+	MsgGeminiCacheNoAvailableChannel      = "gemini_cache.no_available_channel"
+	MsgGeminiCacheStorageNotPriced        = "gemini_cache.storage_not_priced"
+	MsgGeminiCacheChannelUnavailable      = "gemini_cache.channel_unavailable"
+	MsgGeminiCacheUpstreamRejected        = "gemini_cache.upstream_rejected"
+	MsgGeminiCacheUpstreamInvalidResponse = "gemini_cache.upstream_invalid_response"
+	MsgGeminiCacheUpstreamFailed          = "gemini_cache.upstream_failed"
+	MsgGeminiCachePersistFailed           = "gemini_cache.persist_failed"
+	MsgGeminiCacheLookupFailed            = "gemini_cache.lookup_failed"
+	MsgGeminiCacheIDAllocationFailed      = "gemini_cache.id_allocation_failed"
 )
 
 // Emails and the name of the token created at registration, in the

@@ -319,7 +319,8 @@ export interface TieredBillingSummary {
     field: string
     shortLabel: string
     price: number
-    unit?: 'request' | 'image'
+    /** Absent for per-1M-token prices; `token_hour` is per 1M tokens per hour. */
+    unit?: 'request' | 'image' | 'token_hour'
   }>
 }
 
@@ -339,6 +340,71 @@ export function hasAnyCacheTokens(
     (other.cache_creation_tokens_5m || 0) > 0 ||
     (other.cache_creation_tokens_1h || 0) > 0
   )
+}
+
+/**
+ * Whether the log charged explicit context cache storage. Ordinary requests
+ * never store a cache, so their summaries omit storage prices.
+ */
+export function hasExplicitCacheStorage(
+  other: LogOtherData | null | undefined
+): boolean {
+  if (!other) return false
+  return (
+    isPositiveFiniteNumber(other.billing_tokens?.cs) ||
+    isPositiveFiniteNumber(other.explicit_cache?.storage_token_hours)
+  )
+}
+
+const EXPLICIT_CACHE_ACTION_LABELS: Record<string, string> = {
+  create: 'Create',
+  extend: 'Extend',
+}
+
+/** Localized label of an explicit cache charge action; unknown actions stay raw. */
+export function explicitCacheActionLabel(
+  action: string | undefined,
+  t: (key: string) => string
+): string {
+  if (!action) return '-'
+  const key = EXPLICIT_CACHE_ACTION_LABELS[action]
+  return key ? t(key) : action
+}
+
+/**
+ * Format a cache storage duration in the largest unit that reads naturally,
+ * keeping the exact seconds alongside when a larger unit rounds them.
+ */
+export function formatStorageDuration(
+  seconds: number,
+  locale: string | undefined
+): string {
+  const exactSeconds = new Intl.NumberFormat(locale, {
+    style: 'unit',
+    unit: 'second',
+    unitDisplay: 'long',
+    maximumFractionDigits: 0,
+  }).format(seconds)
+  let unit: 'day' | 'hour' | 'minute' | null = null
+  let value = seconds
+  if (seconds >= 86400 && seconds % 86400 === 0) {
+    unit = 'day'
+    value = seconds / 86400
+  } else if (seconds >= 3600) {
+    unit = 'hour'
+    value = seconds / 3600
+  } else if (seconds >= 60) {
+    unit = 'minute'
+    value = seconds / 60
+  }
+  if (!unit) return exactSeconds
+  const readable = new Intl.NumberFormat(locale, {
+    style: 'unit',
+    unit,
+    unitDisplay: 'long',
+    maximumFractionDigits: 2,
+  }).format(value)
+  return `${readable} (${exactSeconds})`
 }
 
 export function getTieredBillingSummary(
@@ -401,11 +467,13 @@ export function getTieredBillingSummary(
   }
 
   const cacheTokensPresent = hasAnyCacheTokens(other)
+  const storageCharged = hasExplicitCacheStorage(other)
 
   const priceEntries: TieredBillingSummary['priceEntries'] = []
   for (const v of BILLING_PRICING_VARS) {
     if (!v.field) continue
     if (v.group === 'cache' && !cacheTokensPresent) continue
+    if (v.group === 'storage' && !storageCharged) continue
     const raw = tier[v.field as keyof ParsedTier]
     const price = Number(raw)
     if (Number.isFinite(price) && price >= 0) {
@@ -413,6 +481,7 @@ export function getTieredBillingSummary(
         field: v.field,
         shortLabel: v.shortLabel,
         price,
+        ...(v.group === 'storage' ? { unit: 'token_hour' as const } : {}),
       })
     }
   }

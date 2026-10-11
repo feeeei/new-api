@@ -38,6 +38,7 @@ Powered by [expr-lang/expr](https://github.com/expr-lang/expr). Expressions are 
 | `img` | 图片输入 token 数 |
 | `img_cr` | 图片缓存读取 token 数；只有表达式显式引用且上游提供有效缓存模态明细时才单独拆分 |
 | `ai` | 音频输入 token 数 |
+| `cs` | 显式上下文缓存存储量（token·小时）。只有显式缓存的创建、延长扣费会提供，普通请求恒为 0；不是 `p` 的子类别，不参与自动扣除 |
 
 **输出侧变量：**
 
@@ -93,6 +94,13 @@ Anthropic 的独立缓存计数语义不采用这一 OpenAI 图片拆分。
 求值失败回退预扣时不伪造实际用量；固定价格和未引用 `img_cr` 的表达式不新增这些字段。
 文本/图片日志的 `cache_tokens` 继续保留上游缓存总量。Images 的 `output_tokens` 是图片输出，
 内置图片价格使用 `c`，无需上游额外报告 `output_tokens_details.image_tokens`。
+
+#### Gemini 缓存音频
+
+Gemini 的 `promptTokensDetails` 是整个提示（含缓存内容）的模态明细，`cacheTokensDetails` 是其中缓存部分的明细。
+表达式同时引用 `ai` 和 `cr` 时，缓存中的音频从 `ai` 移出，只作为缓存读取按 `cr` 计一次，
+`p` 也只扣除一次。缓存明细缺失、为负或超过音频或缓存总量时保持原有计算。
+只引用 `ai` 而不引用 `cr` 的表达式不受影响；OpenAI 与 Anthropic 语义的用量不走这条规则。
 
 ### 旧定价转换
 
@@ -157,6 +165,18 @@ OpenAI 已于 2026-05-12 下线 DALL·E 2/3；其校验、默认值和倍率保�
 中的图片载荷数结算，任务消费日志同样记录 `image_count`。
 
 > **注意：** 自动扣除针对 GPT/OpenAI 格式的 API（prompt_tokens 包含子类别）。Claude 格式的 API 不重复扣除缓存；未独立计价的缓存读取加回输入。系统根据上游返回格式自动处理。
+
+### 显式上下文缓存存储（`cs`）
+
+Gemini 显式上下文缓存（`/v1beta/cachedContents`）在创建和延长时单独扣费，不经过普通请求的结算：
+
+- 创建：`p = len = 缓存 token 数`，`c = 0`，`cs = 缓存 token 数 × TTL 小时数`。缓存 token 按输入价收取，再加整个有效期的存储费。
+- 延长：`p = c = 0`，`len = 缓存 token 数`，`cs = 缓存 token 数 × 实际延长的小时数`。缩短、删除不退费。
+- `cs` 的系数是每百万 token 每小时的美元价，与 Google 价目的写法一致，例如 `tier("standard", p * 1.25 + c * 10 + cr * 0.125 + cs * 4.5)`。
+- 存储价只能写在表达式里。模型不是表达式计费、表达式没有引用 `cs`，或命中的分支是 `fixed()` 按次价时，创建缓存会以"未配置存储价"拒绝，延长同样拒绝。
+- 分组倍率与用户分组特殊倍率照常生效。缓存扣费不携带请求体和请求头，`param()` / `header()` 取不到值，时间类条件照常生效。
+- 引用缓存的生成请求照常结算，缓存命中部分按 `cr` 计费，`cs` 为 0。
+- 消费日志的 `billing_tokens` 记录 `cs`，`other.explicit_cache` 记录动作、缓存名、缓存 token 数与计费时长。
 
 ### Built-in Functions
 

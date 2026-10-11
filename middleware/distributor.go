@@ -97,6 +97,20 @@ func Distribute() func(c *gin.Context) {
 				}
 			}
 		}
+		// Every native Gemini action is checked, not only generation: a
+		// reference that is not an id issued to this token must never reach
+		// upstream, whichever path carries it.
+		if c.GetInt("relay_mode") == relayconstant.RelayModeGemini {
+			// A request that references an explicit context cache runs only on
+			// the channel credential holding the cache.
+			binding, cacheErr := service.ResolveGeminiCachedContentBinding(c, modelRequest.Model)
+			if cacheErr != nil {
+				c.Data(cacheErr.StatusCode, "application/json", cacheErr.Body())
+				c.Abort()
+				return
+			}
+			pinned = pinned || binding != nil
+		}
 		if pinned || shouldSelectChannel {
 			usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
 			var selectErr *service.ChannelSelectError
@@ -122,7 +136,11 @@ func Distribute() func(c *gin.Context) {
 			}
 		}
 		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
-		SetupContextForSelectedChannel(c, channel, modelRequest.Model)
+		setupErr := SetupContextForSelectedChannel(c, channel, modelRequest.Model)
+		if setupErr != nil && service.GetGeminiCachedContentBinding(c) != nil {
+			service.AbortWithGoogleError(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgGeminiCacheChannelUnavailable))
+			return
+		}
 		c.Next()
 		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
 			service.RecordChannelAffinity(c, channel.Id)
@@ -616,9 +634,21 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	common.SetContextKey(c, constant.ContextKeyChannelModelMapping, channel.GetModelMapping())
 	common.SetContextKey(c, constant.ContextKeyChannelStatusCodeMapping, channel.GetStatusCodeMapping())
 
-	key, index, newAPIError := channel.GetNextEnabledKey()
-	if newAPIError != nil {
-		return newAPIError
+	var key string
+	var index int
+	if binding := service.GetGeminiCachedContentBinding(c); binding != nil && binding.Record.ChannelId == channel.Id {
+		// The explicit cache exists only under the credential that created it.
+		boundKey, ok := binding.KeyFor(channel)
+		if !ok {
+			return types.NewErrorWithStatusCode(errors.New("the key holding the cached content is no longer available"), types.ErrorCodeGetChannelFailed, http.StatusServiceUnavailable, types.ErrOptionWithSkipRetry())
+		}
+		key, index = boundKey, binding.Record.KeyIndex
+	} else {
+		var newAPIError *types.NewAPIError
+		key, index, newAPIError = channel.GetNextEnabledKey()
+		if newAPIError != nil {
+			return newAPIError
+		}
 	}
 	if channel.ChannelInfo.IsMultiKey {
 		common.SetContextKey(c, constant.ContextKeyChannelIsMultiKey, true)
